@@ -1,4 +1,4 @@
-# Tentino
+# Tontine
 
 Private peer-to-peer agreement pools on GenLayer, resolved by an LLM oracle over public web sources.
 
