@@ -4,7 +4,7 @@ Private peer-to-peer agreement pools on GenLayer, resolved by an LLM oracle over
 
 ## What it is
 
-Tentino lets a creator open a private pool, invite a fixed set of wallets, and define an event with an objective outcome that can be checked against public web sources. Participants stake native GEN on the outcome they expect. After the event, the pool is resolved by GenLayer's LLM consensus reading the declared sources, and the winning side splits the pot pro-rata to each stake.
+Tontine lets a creator open a private pool, invite a fixed set of wallets, and define an event with an objective outcome that can be checked against public web sources. Participants stake native GEN on the outcome they expect. After the event, the pool is resolved by GenLayer's LLM consensus reading the declared sources, and the winning side splits the pot pro-rata to each stake.
 
 Pools are private by whitelist: only invited wallets can join. Everything else is public. There is no confidentiality layer and the project does not promise anonymity. Wallets and amounts are visible on-chain, in line with how Polymarket and Augur work.
 
@@ -38,7 +38,7 @@ Requires Node.js 18+ for the GenLayer CLI and Python 3.12 for the test tooling.
     python3 -m venv .venv
     source .venv/bin/activate
 
-The contract lives in `contracts/tentino.py`. Lint and validate it with the GenLayer dev tooling before any deploy.
+The contract lives in `contracts/tontine.py`. Lint and validate it with the GenLayer dev tooling before any deploy.
 
 ## License
 
