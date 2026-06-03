@@ -198,7 +198,7 @@ def _stake_key(pool_id: u256, wallet: Address) -> bytes:
     return Keccak256(gl.calldata.encode([pool_id, wallet])).digest()
 
 
-class Tentino(gl.Contract):
+class Tontine(gl.Contract):
     admin: Address
     pending_admin: Address
     admin_transfer_deadline: u256
