@@ -341,8 +341,9 @@ class Tontine(gl.Contract):
         creator_outcome_index: u8,
         creator_stake: u256,
     ) -> u256:
+        # The killswitch always sets paused, so the pause guard already blocks
+        # creation while it is active; a separate killswitch guard would be dead.
         self._require_not_paused()
-        self._require_no_killswitch()
 
         sender = gl.message.sender_address
 
