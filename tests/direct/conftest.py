@@ -218,17 +218,21 @@ def pool_kwargs(creator, whitelist=None, **overrides):
         "join_deadline_offset": HOUR,
         "resolution_deadline_offset": 2 * HOUR,
         "creator_outcome_index": 0,
-        "creator_stake": MIN_STAKE,
     }
     args.update(overrides)
     return args
 
 
 def create_pool(contract, vm, creator, value=None, **overrides):
-    """Create a pool as `creator` and return its integer id."""
+    """Create a pool as `creator` and return its integer id.
+
+    The creator's stake is derived from value minus the creation fee, so the
+    default value funds exactly the minimum stake plus the fee. Pass an explicit
+    value to set a larger stake.
+    """
     args = pool_kwargs(creator, **overrides)
     vm.sender = creator
-    vm.value = value if value is not None else int(args["creator_stake"]) + CREATION_FEE
+    vm.value = value if value is not None else MIN_STAKE + CREATION_FEE
     pid = contract.create_pool(
         args["terms"],
         args["outcome_labels"],
@@ -237,7 +241,6 @@ def create_pool(contract, vm, creator, value=None, **overrides):
         args["join_deadline_offset"],
         args["resolution_deadline_offset"],
         args["creator_outcome_index"],
-        args["creator_stake"],
     )
     return int(pid)
 

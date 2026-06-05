@@ -43,7 +43,6 @@ def test_total_pool_matches_outcome_sum_after_random_activity(direct_vm, deploy)
             whitelist=wallets,
             outcome_labels=labels,
             creator_outcome_index=p % len(labels),
-            creator_stake=MIN_STAKE,
         )
         pools.append((pid, len(labels)))
 
@@ -93,7 +92,6 @@ def test_dust_three_coprime_winners(direct_vm, deploy, alice, bob, charlie, dave
         whitelist=whitelist,
         outcome_labels=["win", "lose"],
         creator_outcome_index=0,
-        creator_stake=s1,
         value=s1 + CREATION_FEE,
     )
     join(contract, direct_vm, bob, pid, 0, s2)

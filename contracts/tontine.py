@@ -83,14 +83,6 @@ class Stake:
     claimed: bool
 
 
-@allow_storage
-@dataclass
-class ReputationTracker:
-    wallet: Address
-    pools_completed: u256
-    pools_refunded: u256
-
-
 @dataclass
 class PoolSummary:
     pool_id: u256
@@ -105,14 +97,6 @@ class PoolSummary:
     resolution_deadline: u256
     winning_outcome_index: u8
     participant_count: u256
-
-
-@dataclass
-class WalletStats:
-    wallet: Address
-    pools_completed: u256
-    pools_refunded: u256
-    reputation_score: u256
 
 
 @dataclass
@@ -231,8 +215,6 @@ class Tontine(gl.Contract):
     stakes: TreeMap[bytes, Stake]
     stakes_by_wallet: TreeMap[Address, DynArray[u256]]
 
-    reputation_by_wallet: TreeMap[Address, ReputationTracker]
-
     total_pools_created: u256
     total_pools_settled: u256
     total_volume_settled: u256
@@ -309,26 +291,6 @@ class Tontine(gl.Contract):
             raise gl.vm.UserError("wallet pool limit reached")
         lst.append(pool_id)
 
-    def _calc_reputation(self, rep: ReputationTracker) -> u256:
-        if rep.pools_completed == u256(0):
-            return u256(0)
-        denom = rep.pools_completed + rep.pools_refunded * u256(2)
-        return (rep.pools_completed * u256(100)) // denom
-
-    def _bump_completed(self, wallet: Address):
-        rep = self.reputation_by_wallet.get(wallet, None)
-        if rep is None:
-            self.reputation_by_wallet[wallet] = ReputationTracker(wallet, u256(1), u256(0))
-        else:
-            rep.pools_completed = rep.pools_completed + u256(1)
-
-    def _bump_refunded(self, wallet: Address):
-        rep = self.reputation_by_wallet.get(wallet, None)
-        if rep is None:
-            self.reputation_by_wallet[wallet] = ReputationTracker(wallet, u256(0), u256(1))
-        else:
-            rep.pools_refunded = rep.pools_refunded + u256(1)
-
     @gl.public.write.payable
     def create_pool(
         self,
@@ -339,7 +301,6 @@ class Tontine(gl.Contract):
         join_deadline_offset: u256,
         resolution_deadline_offset: u256,
         creator_outcome_index: u8,
-        creator_stake: u256,
     ) -> u256:
         # The killswitch always sets paused, so the pause guard already blocks
         # creation while it is active; a separate killswitch guard would be dead.
@@ -406,15 +367,14 @@ class Tontine(gl.Contract):
         if len(terms) > MAX_TERMS_LEN:
             raise gl.vm.UserError("terms too long")
 
-        if creator_stake < MIN_STAKE:
-            raise gl.vm.UserError("stake below minimum")
-
         value = gl.message.value
-        if value < creator_stake + self.creation_fee:
+        if value < self.creation_fee:
             raise gl.vm.UserError("insufficient value: need stake plus creation fee")
 
-        # Any value above the fee counts as stake, so overpaying never reverts.
+        # The creator's stake is whatever was sent beyond the creation fee.
         effective_stake = value - self.creation_fee
+        if effective_stake < MIN_STAKE:
+            raise gl.vm.UserError("stake below minimum")
 
         now = _now()
         pool_id = self.next_pool_id
@@ -668,7 +628,6 @@ class Tontine(gl.Contract):
         share = (stake.amount * pool.total_pool) // winning_pool
 
         stake.claimed = True
-        self._bump_completed(sender)
 
         gl.get_contract_at(sender).emit_transfer(value=share)
 
@@ -699,11 +658,6 @@ class Tontine(gl.Contract):
             raise gl.vm.UserError("already claimed")
 
         stake.claimed = True
-        # Only a timeout counts against reputation; cancel, no-contest, nobody-won
-        # and admin blocks are not the participant's fault.
-        if pool.refund_reason == RefundReason.TIMEOUT:
-            self._bump_refunded(sender)
-
         amount = stake.amount
         gl.get_contract_at(sender).emit_transfer(value=amount)
 
@@ -913,13 +867,6 @@ class Tontine(gl.Contract):
         if lst is None:
             return []
         return [pid for pid in lst]
-
-    @gl.public.view
-    def get_wallet_stats(self, wallet: Address) -> WalletStats:
-        rep = self.reputation_by_wallet.get(wallet, None)
-        if rep is None:
-            return WalletStats(wallet, u256(0), u256(0), u256(0))
-        return WalletStats(wallet, rep.pools_completed, rep.pools_refunded, self._calc_reputation(rep))
 
     @gl.public.view
     def verify_in_whitelist(self, pool_id: u256, wallet: Address) -> bool:

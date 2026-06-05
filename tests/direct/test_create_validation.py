@@ -99,7 +99,9 @@ CASES = [
     ("invalid_outcome_index", None, {"creator_outcome_index": 5}, None, "invalid outcome index"),
     ("terms_empty", None, {"terms": ""}, None, "terms empty"),
     ("terms_too_long", None, {"terms": "x" * 2001}, None, "terms too long"),
-    ("stake_below_minimum", None, {"creator_stake": MIN_STAKE - 1}, None, "stake below minimum"),
+    # Stake derives from value minus the fee, so a value that covers the fee but
+    # falls one wei short of the minimum stake trips the stake guard.
+    ("stake_below_minimum", None, {}, CREATION_FEE + MIN_STAKE - 1, "stake below minimum"),
     ("insufficient_value", None, {}, MIN_STAKE, "insufficient value"),
 ]
 
@@ -130,7 +132,7 @@ def test_create_pool_validation(direct_vm, deploy, admin, alice, name, setup, ov
 
     args = pool_kwargs(alice, **overrides)
     direct_vm.sender = alice
-    direct_vm.value = value if value is not None else int(args["creator_stake"]) + CREATION_FEE
+    direct_vm.value = value if value is not None else MIN_STAKE + CREATION_FEE
     with direct_vm.expect_revert(message):
         contract.create_pool(
             args["terms"],
@@ -140,5 +142,4 @@ def test_create_pool_validation(direct_vm, deploy, admin, alice, name, setup, ov
             args["join_deadline_offset"],
             args["resolution_deadline_offset"],
             args["creator_outcome_index"],
-            args["creator_stake"],
         )

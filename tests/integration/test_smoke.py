@@ -32,7 +32,6 @@ def test_deploy_and_create():
             HOUR,
             2 * HOUR,
             0,
-            MIN_STAKE,
         ],
     ).transact(value=MIN_STAKE + CREATION_FEE)
     assert tx_execution_succeeded(receipt)

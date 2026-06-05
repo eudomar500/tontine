@@ -61,7 +61,7 @@ def _new_contested_pool(outcome_labels=None):
     labels = outcome_labels or OUTCOMES
     whitelist = [addr(admin), addr(alice), addr(bob)]
     receipt = contract.create_pool(
-        args=[TERMS, labels, [SOURCE_A, SOURCE_B], whitelist, HOUR, 2 * HOUR, 0, MIN_STAKE],
+        args=[TERMS, labels, [SOURCE_A, SOURCE_B], whitelist, HOUR, 2 * HOUR, 0],
     ).transact(value=MIN_STAKE + CREATION_FEE)
     assert tx_execution_succeeded(receipt), "pool creation failed"
     pid = int(contract.get_pool_count(args=[]).call())
