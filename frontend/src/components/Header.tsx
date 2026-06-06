@@ -35,7 +35,7 @@ export default function Header() {
 
   return (
     <header className="w-full border-b border-charcoal-light/30 bg-charcoal-dark/80 backdrop-blur-md px-8 py-5 md:px-12 md:py-6 flex items-center justify-between sticky top-0 z-40">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-8">
         <a href="/" className="flex items-center">
           <Image
             src={theme === 'dark' ? '/logo-monochrome.svg' : '/logo-monochrome-dark.svg'}
@@ -46,6 +46,15 @@ export default function Header() {
             className="h-8 w-auto"
           />
         </a>
+
+        <nav className="hidden sm:flex items-center">
+          <a
+            href="#explore"
+            className="text-sm font-semibold tracking-wide text-foreground/50 hover:text-foreground transition-all duration-200"
+          >
+            Explore
+          </a>
+        </nav>
       </div>
 
       <div className="flex items-center gap-4">
