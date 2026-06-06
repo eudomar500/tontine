@@ -21,7 +21,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${inter.variable} font-sans h-full antialiased`}
+      className={`${inter.variable} font-sans h-full antialiased dark`}
     >
       <body className="min-h-full bg-background text-foreground flex flex-col">
         <Providers>

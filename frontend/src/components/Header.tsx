@@ -3,11 +3,13 @@
 import React, { useState, useEffect } from 'react';
 import Image from 'next/image';
 import Avatar from 'boring-avatars';
-import { Copy, Check, ExternalLink, Wallet } from 'lucide-react';
+import { Copy, Check, ExternalLink, Wallet, Sun, Moon } from 'lucide-react';
 import { useWalletStore } from '../store/wallet';
+import { useThemeStore } from '../store/theme';
 
 export default function Header() {
   const { connectedAddress, setModalOpen, disconnectWallet, initializeDiscovery } = useWalletStore();
+  const { theme, toggleTheme } = useThemeStore();
   const [copied, setCopied] = useState(false);
 
   // Initialize EIP-6963 discovery
@@ -36,7 +38,7 @@ export default function Header() {
       <div className="flex items-center gap-2">
         <a href="/" className="flex items-center">
           <Image
-            src="/logo-monochrome.svg"
+            src={theme === 'dark' ? '/logo-monochrome.svg' : '/logo-monochrome-dark.svg'}
             alt="tontine logo"
             width={120}
             height={32}
@@ -47,6 +49,19 @@ export default function Header() {
       </div>
 
       <div className="flex items-center gap-4">
+        {/* Theme toggle control */}
+        <button
+          onClick={toggleTheme}
+          title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+          className="p-2.5 hover:bg-charcoal-medium border border-charcoal-light rounded-xl text-foreground/60 hover:text-foreground transition-all cursor-pointer"
+        >
+          {theme === 'dark' ? (
+            <Sun className="w-4 h-4" />
+          ) : (
+            <Moon className="w-4 h-4" />
+          )}
+        </button>
+
         {connectedAddress ? (
           <div className="flex items-center gap-3 bg-charcoal-medium border border-charcoal-light rounded-xl p-1.5 pl-3 pr-3">
             {/* boring-avatar identicon */}
