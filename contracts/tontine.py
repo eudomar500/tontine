@@ -284,7 +284,9 @@ class Tontine(gl.Contract):
     def _index_stake_for_wallet(self, wallet: Address, pool_id: u256):
         lst = self.stakes_by_wallet.get(wallet, None)
         if lst is None:
-            self.stakes_by_wallet[wallet] = gl.storage.inmem_allocate(DynArray[u256])
+            # Assigning an empty list seeds the storage DynArray; read it back to
+            # get the persistent handle to append to.
+            self.stakes_by_wallet[wallet] = []
             lst = self.stakes_by_wallet[wallet]
         # Bounded to stop a single wallet from growing this index without limit.
         if len(lst) >= MAX_POOLS_PER_WALLET:
@@ -379,19 +381,18 @@ class Tontine(gl.Contract):
         now = _now()
         pool_id = self.next_pool_id
 
-        outcomes = gl.storage.inmem_allocate(DynArray[Outcome])
+        # Build these as plain lists. Assigning a list to a DynArray field copies
+        # it into storage element by element; inmem_allocate is only meant for
+        # generic storage classes and raises on a concrete DynArray in the runner.
+        outcomes = []
         for i in range(n_out):
             staked = effective_stake if i == int(creator_outcome_index) else u256(0)
             count = u256(1) if i == int(creator_outcome_index) else u256(0)
             outcomes.append(Outcome(outcome_labels[i], staked, count))
 
-        sources = gl.storage.inmem_allocate(DynArray[str])
-        for i in range(n_src):
-            sources.append(resolution_sources[i])
+        sources = [resolution_sources[i] for i in range(n_src)]
 
-        wl = gl.storage.inmem_allocate(DynArray[Address])
-        for i in range(n_wl):
-            wl.append(whitelist[i])
+        wl = [whitelist[i] for i in range(n_wl)]
 
         asset = AssetReference(AssetType.NATIVE_GEN, zero, u256(0), effective_stake)
 

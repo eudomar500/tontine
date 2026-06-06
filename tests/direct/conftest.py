@@ -66,54 +66,6 @@ def _load_sdk():
 _seed_sdk_cache()
 
 
-def _patch_inmem_allocate():
-    """Work around a bug in the pinned SDK's storage.inmem_allocate.
-
-    For a parametrized container such as DynArray[Outcome] the descriptor's
-    `cls` resolves to the typing generic alias, whose __init__ is
-    _GenericAlias.__init__ and requires an `args` argument. inmem_allocate
-    builds the instance via td.get() and then unconditionally invokes that
-    __init__, which raises TypeError for every container type. The container
-    is already fully constructed at that point, so the only correct behaviour
-    is to skip the call. Real storage dataclass inits are tagged with
-    ORIGINAL_INIT_ATTR, which lets us tell the two apart and still run a
-    genuine user __init__ when one exists.
-
-    The SDK modules are reloaded for each test, so this is reapplied per
-    deploy rather than once at import.
-    """
-    import genlayer.py.storage as storage
-    from genlayer.py.storage._internal.generate import (
-        ORIGINAL_INIT_ATTR,
-        _storage_build,
-        Lit,
-    )
-    from genlayer.py.storage._internal.core import InmemManager, ROOT_SLOT_ID
-
-    if getattr(storage, "_inmem_allocate_patched", False):
-        return
-
-    def inmem_allocate(t, *init_args, **init_kwargs):
-        td = _storage_build(t, {})
-        assert not isinstance(td, Lit)
-        instance = td.get(InmemManager().get_store_slot(ROOT_SLOT_ID), 0)
-
-        cls = getattr(td, "cls", None)
-        init = getattr(cls, "__init__", None) if cls is not None else getattr(t, "__init__", None)
-        if init is not None and hasattr(init, ORIGINAL_INIT_ATTR):
-            getattr(init, ORIGINAL_INIT_ATTR)(instance, *init_args, **init_kwargs)
-        return instance
-
-    storage.inmem_allocate = inmem_allocate
-    storage._inmem_allocate_patched = True
-
-    import genlayer.gl as gl_mod
-
-    gl_storage = getattr(gl_mod, "storage", None)
-    if gl_storage is not None and gl_storage is not storage:
-        gl_storage.inmem_allocate = inmem_allocate
-
-
 def make_address(seed: str):
     """Build a deterministic Address from a seed string."""
     _load_sdk()
@@ -193,7 +145,6 @@ def deploy(direct_vm, direct_deploy, admin, fee_collector):
         direct_vm.sender = deployer if deployer is not None else admin
         direct_vm.value = 0
         contract = direct_deploy(CONTRACT, collector if collector is not None else fee_collector)
-        _patch_inmem_allocate()
         return contract
 
     return _deploy

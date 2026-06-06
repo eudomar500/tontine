@@ -10,8 +10,6 @@ packages are untouched. The fixes:
     Address type, which do not interoperate. We convert decoded CalldataAddress
     values to SDK Address on the way in, and SDK Address back to CalldataAddress
     on the way out (results).
-  - inmem_allocate. The pinned SDK's inmem_allocate raises for parametrized
-    containers such as DynArray[Outcome]; we restore the intended behaviour.
   - genlayer.gl preimport. The SDK reads its message from fd 0 at import time;
     we import it once against a dummy message so the cache is clean.
   - VM teardown. The direct-mode teardown evicts the SDK from sys.path, which
@@ -36,7 +34,7 @@ from pathlib import Path
 GLTEST_CACHE = Path.home() / ".cache" / "gltest-direct"
 LINTER_CACHE = Path.home() / ".cache" / "genvm-linter"
 
-_runtime = {"Address": None, "inmem_patched": False}
+_runtime = {"Address": None}
 
 
 def _seed_sdk_cache():
@@ -57,40 +55,12 @@ def _setup_sdk_path():
     setup_sdk_paths(Path(os.environ["GLSIM_SDK_CONTRACT"]))
 
 
-def _patch_inmem_allocate():
-    import genlayer.py.storage as storage
-    from genlayer.py.storage._internal.generate import (
-        ORIGINAL_INIT_ATTR,
-        _storage_build,
-        Lit,
-    )
-    from genlayer.py.storage._internal.core import InmemManager, ROOT_SLOT_ID
-
-    def inmem_allocate(t, *init_args, **init_kwargs):
-        td = _storage_build(t, {})
-        assert not isinstance(td, Lit)
-        instance = td.get(InmemManager().get_store_slot(ROOT_SLOT_ID), 0)
-        cls = getattr(td, "cls", None)
-        init = getattr(cls, "__init__", None) if cls is not None else getattr(t, "__init__", None)
-        if init is not None and hasattr(init, ORIGINAL_INIT_ATTR):
-            getattr(init, ORIGINAL_INIT_ATTR)(instance, *init_args, **init_kwargs)
-        return instance
-
-    storage.inmem_allocate = inmem_allocate
-
-
 def _ensure_runtime():
-    """Resolve the SDK Address type and apply the inmem fix once available."""
+    """Resolve the SDK Address type once it is importable."""
     if _runtime["Address"] is None:
         from genlayer.py.types import Address
 
         _runtime["Address"] = Address
-    if not _runtime["inmem_patched"]:
-        try:
-            _patch_inmem_allocate()
-            _runtime["inmem_patched"] = True
-        except Exception:
-            pass
     return _runtime["Address"]
 
 
