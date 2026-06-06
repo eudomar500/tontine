@@ -32,7 +32,7 @@ export default function Header() {
   };
 
   return (
-    <header className="w-full border-b border-charcoal-light bg-charcoal-dark px-6 py-4 flex items-center justify-between sticky top-0 z-40">
+    <header className="w-full border-b border-charcoal-light/30 bg-charcoal-dark/80 backdrop-blur-md px-8 py-5 md:px-12 md:py-6 flex items-center justify-between sticky top-0 z-40">
       <div className="flex items-center gap-2">
         <a href="/" className="flex items-center">
           <Image
