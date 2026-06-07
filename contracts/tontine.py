@@ -537,12 +537,15 @@ class Tontine(gl.Contract):
         def decide() -> str:
             contents = []
             for url in sources:
-                resp = gl.nondet.web.get(url)
-                # A 4xx/5xx body is an error page, not evidence. Feeding it to the
-                # model would resolve the pool on noise; reject and force a retry.
-                if resp.status >= 400 or resp.body is None:
+                # render runs the page in a headless browser and returns its
+                # visible text, so modern JS pages resolve. Unlike web.get there
+                # is no status code: an unreachable or anti-bot page comes back as
+                # empty (or no) text, which is not evidence, so reject it.
+                # force_refund covers pools that never resolve.
+                content = gl.nondet.web.render(url, mode="text")
+                if content is None or len(content.strip()) == 0:
                     raise gl.vm.UserError("source fetch failed")
-                contents.append(resp.body.decode("utf-8", errors="replace")[:MAX_FETCH_CHARS])
+                contents.append(content[:MAX_FETCH_CHARS])
             joined = ""
             for i in range(len(contents)):
                 tag = "SOURCE " + str(i + 1)

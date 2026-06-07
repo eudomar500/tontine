@@ -11,7 +11,7 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 
 KEYSTORE_PATH = Path(__file__).parent.parent / ".admin-keystore.json"
 PASSWORD = os.environ["ADMIN_KEYSTORE_PASSWORD"]
-CONTRACT = "0xF3Fa92460839e06D3763e8f2C0896fA8b83EC88D"
+CONTRACT = "0x8d760a7e33df7A9a3b4F3120a8e66A6Cad4cC7B5"
 
 # Decrypt the keystore in memory; the private key never lands on disk in plaintext.
 with open(KEYSTORE_PATH) as f:

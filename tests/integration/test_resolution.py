@@ -162,12 +162,16 @@ def test_contradictory_sources_do_not_settle():
 
 
 def test_failing_source_does_not_settle():
-    """A source returning 5xx must abort resolution (the M-1 guard)."""
+    """A source that renders no text must abort resolution (the M-1 guard).
+
+    render has no status code; an unreachable or anti-bot page comes back as
+    empty text, so the empty-content guard is what rejects a failing source.
+    """
     contract, pid, accounts = _new_contested_pool()
     admin = accounts[0]
 
     good = "The Eagles won the 2027 final 28 to 17."
-    install_mocks({SOURCE_A: _page(good), SOURCE_B: {"status": 503, "body": "service unavailable"}})
+    install_mocks({SOURCE_A: _page(good), SOURCE_B: _page("")})
 
     receipt = _request_resolution(contract, pid, admin)
 
