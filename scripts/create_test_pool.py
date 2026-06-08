@@ -11,7 +11,7 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 
 KEYSTORE_PATH = Path(__file__).parent.parent / ".admin-keystore.json"
 PASSWORD = os.environ["ADMIN_KEYSTORE_PASSWORD"]
-CONTRACT = "0x8d760a7e33df7A9a3b4F3120a8e66A6Cad4cC7B5"
+CONTRACT = "0x4cA9bd0d2130773dfA5C9d571d987E4929A23498"
 
 with open(KEYSTORE_PATH) as f:
     keystore = json.load(f)
@@ -50,6 +50,7 @@ tx_hash = client.write_contract(
         join_deadline_offset,
         resolution_deadline_offset,
         creator_outcome_index,
+        "Crypto",
     ],
     value=value,
 )

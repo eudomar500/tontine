@@ -73,6 +73,9 @@ class Pool:
     resolution_evidence: str
     refund_reason: u8
 
+    # Free-text label for frontend filtering and grouping; no economic effect.
+    category: str
+
 
 @allow_storage
 @dataclass
@@ -97,6 +100,7 @@ class PoolSummary:
     resolution_deadline: u256
     winning_outcome_index: u8
     participant_count: u256
+    category: str
 
 
 @dataclass
@@ -303,6 +307,7 @@ class Tontine(gl.Contract):
         join_deadline_offset: u256,
         resolution_deadline_offset: u256,
         creator_outcome_index: u8,
+        category: str = "",
     ) -> u256:
         # The killswitch always sets paused, so the pause guard already blocks
         # creation while it is active; a separate killswitch guard would be dead.
@@ -369,6 +374,10 @@ class Tontine(gl.Contract):
         if len(terms) > MAX_TERMS_LEN:
             raise gl.vm.UserError("terms too long")
 
+        # Optional free-text label; empty is allowed, only bound the length.
+        if len(category) > MAX_LABEL_LEN:
+            raise gl.vm.UserError("category too long")
+
         value = gl.message.value
         if value < self.creation_fee:
             raise gl.vm.UserError("insufficient value: need stake plus creation fee")
@@ -413,6 +422,7 @@ class Tontine(gl.Contract):
             total_pool=effective_stake,
             resolution_evidence="",
             refund_reason=RefundReason.NONE,
+            category=category,
         )
         self.pools_by_id[pool_id] = pool
 
@@ -845,6 +855,7 @@ class Tontine(gl.Contract):
             resolution_deadline=pool.resolution_deadline,
             winning_outcome_index=pool.winning_outcome_index,
             participant_count=participants,
+            category=pool.category,
         )
 
     @gl.public.view

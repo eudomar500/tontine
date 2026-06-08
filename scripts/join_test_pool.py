@@ -9,7 +9,7 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 
 # Second whitelisted wallet joins; its key is a raw private key, not a keystore.
 PRIVATE_KEY = os.environ["WALLET2_PRIVATE_KEY"]
-CONTRACT = "0x8d760a7e33df7A9a3b4F3120a8e66A6Cad4cC7B5"
+CONTRACT = "0x4cA9bd0d2130773dfA5C9d571d987E4929A23498"
 
 account = Account.from_key(PRIVATE_KEY)
 client = create_client(chain=testnet_bradbury, account=account)
