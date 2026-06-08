@@ -54,11 +54,28 @@ export default function PoolCard({ pool }: PoolCardProps) {
   return (
     <div className="relative flex flex-col justify-between p-6 sm:p-7 w-full h-[460px] bg-charcoal-medium/40 dark:bg-charcoal-medium/20 border border-charcoal-light/30 rounded-2xl shadow-xl transition-all duration-300 backdrop-blur-md select-none overflow-hidden">
       
+      {/* Border Beam */}
+      <div 
+        className="border-beam-container" 
+        style={{
+          '--border-beam-width': '1.2px',
+          '--border-beam-dark-opacity': '0.22',
+          '--border-beam-light-opacity': '0.12',
+        } as React.CSSProperties}
+      />
+      
       {/* Top Header Section */}
       <div className="flex items-center justify-between mb-4">
-        <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase">
-          Pool #{pool.pool_id}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase">
+            Pool #{pool.pool_id}
+          </span>
+          {pool.category && pool.category.trim() !== '' && (
+            <span className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-charcoal-light/30 text-foreground/60 border border-charcoal-light/20 uppercase tracking-wider">
+              {pool.category}
+            </span>
+          )}
+        </div>
         <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full border ${getBadgeStyles(pool.state)}`}>
           {stateLabel(pool.state)}
         </span>

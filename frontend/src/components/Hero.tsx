@@ -2,19 +2,43 @@
 
 import React, { useRef } from 'react';
 import Image from 'next/image';
-import { Users, FileCheck, Cpu, Wallet } from 'lucide-react';
+import { Wallet } from 'lucide-react';
 import { useWalletStore } from '../store/wallet';
 import { useThemeStore } from '../store/theme';
 import LightSweep from './LightSweep';
 
 interface TiltCardProps {
-  icon: React.ReactNode;
+  number: string;
   title: string;
   description: string;
-  iconColor: string;
 }
 
-function TiltCard({ icon, title, description, iconColor }: TiltCardProps) {
+function GradientNumeral({ number }: { number: string }) {
+  return (
+    <svg viewBox="0 0 65 38" className="h-16 w-auto select-none overflow-visible" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id={`gold-magenta-grad-${number}`} x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#c9a227" />
+          <stop offset="100%" stopColor="#b23a6e" />
+        </linearGradient>
+      </defs>
+      <text
+        x="0"
+        y="32"
+        fill={`url(#gold-magenta-grad-${number})`}
+        fillOpacity="0.03"
+        stroke={`url(#gold-magenta-grad-${number})`}
+        strokeWidth="1.5"
+        style={{ fontFamily: 'var(--font-space-grotesk), sans-serif' }}
+        className="text-[38px] font-black tracking-tighter"
+      >
+        {number}
+      </text>
+    </svg>
+  );
+}
+
+function TiltCard({ number, title, description }: TiltCardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   const sheenRef = useRef<HTMLDivElement>(null);
 
@@ -65,6 +89,16 @@ function TiltCard({ icon, title, description, iconColor }: TiltCardProps) {
       className="relative flex flex-col text-left p-8 bg-charcoal-medium/30 border border-charcoal-light/30 rounded-2xl transition-all duration-300 ease-out shadow-lg hover:shadow-brand-gold/5 dark:hover:shadow-brand-magenta/5 select-none overflow-hidden cursor-pointer"
       style={{ transformStyle: 'preserve-3d', willChange: 'transform' }}
     >
+      {/* Border Beam */}
+      <div 
+        className="border-beam-container" 
+        style={{
+          '--border-beam-width': '1.8px',
+          '--border-beam-dark-opacity': '0.50',
+          '--border-beam-light-opacity': '0.30',
+        } as React.CSSProperties}
+      />
+
       {/* Iridescent sheen overlay */}
       <div
         ref={sheenRef}
@@ -73,13 +107,13 @@ function TiltCard({ icon, title, description, iconColor }: TiltCardProps) {
       
       {/* Card content with 3D translation */}
       <div style={{ transform: 'translateZ(30px)', transformStyle: 'preserve-3d' }}>
-        <div className={`mb-5 ${iconColor} transition-transform duration-300`}>
-          {icon}
+        <div className="mb-6 transition-transform duration-300 hover:scale-105">
+          <GradientNumeral number={number} />
         </div>
-        <h3 className="text-lg sm:text-xl font-bold text-foreground tracking-tight mb-3">
+        <h3 className="text-xl sm:text-2xl font-bold font-display text-foreground tracking-tight mb-4 mt-2">
           {title}
         </h3>
-        <p className="text-sm sm:text-base text-foreground/50 leading-relaxed font-light">
+        <p className="text-sm text-foreground/60 dark:text-foreground/50 leading-relaxed font-normal tracking-wide">
           {description}
         </p>
       </div>
@@ -135,24 +169,21 @@ export default function Hero() {
           style={{ animationDelay: '300ms', animationFillMode: 'both', perspective: '1000px' }}
         >
           <TiltCard
-            icon={<Users className="w-6 h-6" strokeWidth={2.25} />}
+            number="01"
             title="Whitelisted Pools"
             description="Open private agreements by inviting a fixed list of participating wallets. Security and confidentiality without middlemen."
-            iconColor="text-brand-gold"
           />
 
           <TiltCard
-            icon={<FileCheck className="w-6 h-6" strokeWidth={2.25} />}
+            number="02"
             title="Verifiable Terms"
             description="Define objective outcomes and specify trusted public web sources. Participants stake native GEN on outcomes they expect."
-            iconColor="text-brand-magenta"
           />
 
           <TiltCard
-            icon={<Cpu className="w-6 h-6" strokeWidth={2.25} />}
+            number="03"
             title="LLM Consensus"
             description="Upon pool maturity, GenLayer LLM consensus processes web sources and splits the pooled pot pro-rata among winning outcomes."
-            iconColor="text-foreground/85"
           />
         </div>
       </div>

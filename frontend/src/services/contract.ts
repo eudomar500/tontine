@@ -19,6 +19,7 @@ export interface PoolSummary {
   terms_short: string;
   total_pool: string;
   winning_outcome_index: number;
+  category: string;
 }
 
 /**

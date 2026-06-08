@@ -2,11 +2,19 @@
 
 import React, { useEffect, useState } from 'react';
 import { ChevronLeft, ChevronRight, RefreshCw, AlertTriangle, HelpCircle } from 'lucide-react';
-import { usePoolsStore } from '../store/pools';
+import { usePoolsStore, selectFilteredPools, selectCategories } from '../store/pools';
 import PoolCard from './PoolCard';
 
 export default function PoolExplorer() {
-  const { pools, isLoading, error, loadPools } = usePoolsStore();
+  const pools = usePoolsStore(selectFilteredPools);
+  const categories = usePoolsStore(selectCategories);
+  const selectedCategory = usePoolsStore((state) => state.selectedCategory);
+  const setSelectedCategory = usePoolsStore((state) => state.setSelectedCategory);
+  const unfilteredPools = usePoolsStore((state) => state.pools);
+  const isLoading = usePoolsStore((state) => state.isLoading);
+  const error = usePoolsStore((state) => state.error);
+  const loadPools = usePoolsStore((state) => state.loadPools);
+
   const [activeIndex, setActiveIndex] = useState(0);
   const [isMobile, setIsMobile] = useState(false);
 
@@ -14,6 +22,11 @@ export default function PoolExplorer() {
   useEffect(() => {
     loadPools();
   }, [loadPools]);
+
+  // Reset active index when category changes to start from the first card
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [selectedCategory]);
 
   // Adjust translations dynamically based on mobile viewports to prevent overflow
   useEffect(() => {
@@ -155,7 +168,7 @@ export default function PoolExplorer() {
   }
 
   // Empty state handling
-  if (count === 0) {
+  if (unfilteredPools.length === 0) {
     return (
       <div className="w-full max-w-md mx-auto p-10 bg-charcoal-medium/30 border border-charcoal-light/30 rounded-2xl text-center shadow-lg animate-fade-in">
         <div className="flex justify-center mb-5">
@@ -182,6 +195,26 @@ export default function PoolExplorer() {
 
   return (
     <div className="w-full flex flex-col items-center select-none animate-fade-in-up">
+      {/* Category tabs navigation */}
+      <div className="flex flex-wrap items-center justify-center gap-2 mb-12 w-full max-w-2xl px-4">
+        {categories.map((cat) => {
+          const isActive = selectedCategory === cat;
+          return (
+            <button
+              key={cat}
+              onClick={() => setSelectedCategory(cat)}
+              className={`px-4 py-2 text-xs font-semibold tracking-wider uppercase rounded-xl border transition-all duration-200 cursor-pointer ${
+                isActive
+                  ? 'bg-brand-gold text-charcoal-dark border-brand-gold shadow-md'
+                  : 'bg-charcoal-medium/40 hover:bg-charcoal-medium border-charcoal-light/30 text-foreground/60 hover:text-foreground'
+              }`}
+            >
+              {cat}
+            </button>
+          );
+        })}
+      </div>
+
       {/* 3D Carousel Stage */}
       <div 
         className="relative w-full max-w-sm sm:max-w-md h-[480px] flex items-center justify-center"
