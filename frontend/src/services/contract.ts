@@ -139,3 +139,52 @@ export function timeRemaining(deadlineUnix: number): string {
   
   return parts.join(' ');
 }
+
+export interface AssetReference {
+  asset_type: number;
+  token_address: string;
+  token_id: string;
+  amount: string;
+}
+
+export interface OutcomeDetail {
+  label: string;
+  total_staked: string;
+  participants_count: number;
+}
+
+export interface Pool {
+  pool_id: number;
+  creator: string;
+  state: number;
+  terms: string;
+  resolution_sources: string[];
+  outcomes: OutcomeDetail[];
+  winning_outcome_index: number;
+  whitelist: string[];
+  created_at: number;
+  join_deadline: number;
+  resolution_deadline: number;
+  timeout_deadline: number;
+  asset: AssetReference;
+  total_pool: string;
+  resolution_evidence: string;
+  refund_reason: number;
+  category: string;
+}
+
+/**
+ * Fetches the full pool detail by its index.
+ */
+export async function getPool(poolId: number): Promise<Pool> {
+  return rpcQueue.enqueue(() =>
+    withRateLimitRetry(async () => {
+      const res = await client.readContract({
+        address: CONTRACT_ADDRESS,
+        functionName: 'get_pool',
+        args: [poolId],
+      });
+      return res as unknown as Pool;
+    })
+  );
+}

@@ -4,15 +4,18 @@ import { PoolSummary, getPoolCount, getPoolSummary } from '../services/contract'
 interface PoolsState {
   pools: PoolSummary[];
   selectedCategory: string;
+  selectedPoolId: number | null;
   isLoading: boolean;
   error: string | null;
   loadPools: () => Promise<void>;
   setSelectedCategory: (category: string) => void;
+  setSelectedPoolId: (id: number | null) => void;
 }
 
 export const usePoolsStore = create<PoolsState>((set) => ({
   pools: [],
   selectedCategory: 'All',
+  selectedPoolId: null,
   isLoading: false,
   error: null,
 
@@ -43,6 +46,7 @@ export const usePoolsStore = create<PoolsState>((set) => ({
   },
 
   setSelectedCategory: (category) => set({ selectedCategory: category }),
+  setSelectedPoolId: (id) => set({ selectedPoolId: id }),
 }));
 
 // Module-level caches prevent React rendering loops by preserving reference equality 

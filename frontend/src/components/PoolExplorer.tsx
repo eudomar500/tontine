@@ -4,12 +4,14 @@ import React, { useEffect, useState } from 'react';
 import { ChevronLeft, ChevronRight, RefreshCw, AlertTriangle, HelpCircle } from 'lucide-react';
 import { usePoolsStore, selectFilteredPools, selectCategories } from '../store/pools';
 import PoolCard from './PoolCard';
+import PoolDetailDrawer from './PoolDetailDrawer';
 
 export default function PoolExplorer() {
   const pools = usePoolsStore(selectFilteredPools);
   const categories = usePoolsStore(selectCategories);
   const selectedCategory = usePoolsStore((state) => state.selectedCategory);
   const setSelectedCategory = usePoolsStore((state) => state.setSelectedCategory);
+  const setSelectedPoolId = usePoolsStore((state) => state.setSelectedPoolId);
   const unfilteredPools = usePoolsStore((state) => state.pools);
   const isLoading = usePoolsStore((state) => state.isLoading);
   const error = usePoolsStore((state) => state.error);
@@ -95,10 +97,12 @@ export default function PoolExplorer() {
       transform = `translate3d(-${translateAmount}, 0, -120px) scale(0.88) rotateY(28deg)`;
       opacity = 0.45;
       zIndex = 20;
+      pointerEvents = 'auto';
     } else if (isNext) {
       transform = `translate3d(${translateAmount}, 0, -120px) scale(0.88) rotateY(-28deg)`;
       opacity = 0.45;
       zIndex = 20;
+      pointerEvents = 'auto';
     }
 
     return {
@@ -220,11 +224,32 @@ export default function PoolExplorer() {
         className="relative w-full max-w-sm sm:max-w-md h-[480px] flex items-center justify-center"
         style={{ perspective: '1200px', transformStyle: 'preserve-3d' }}
       >
-        {pools.map((pool, idx) => (
-          <div key={pool.pool_id} style={getCardStyle(idx)}>
-            <PoolCard pool={pool} />
-          </div>
-        ))}
+        {pools.map((pool, idx) => {
+          let offset = idx - activeIndex;
+          if (count > 2) {
+            let diff = idx - activeIndex;
+            if (diff < -count / 2) diff += count;
+            if (diff > count / 2) diff -= count;
+            offset = diff;
+          }
+          const isActive = offset === 0 || count === 1;
+
+          return (
+            <div 
+              key={pool.pool_id} 
+              style={getCardStyle(idx)}
+              onClick={() => {
+                if (isActive) {
+                  setSelectedPoolId(pool.pool_id);
+                } else {
+                  setActiveIndex(idx);
+                }
+              }}
+            >
+              <PoolCard pool={pool} isActive={isActive} />
+            </div>
+          );
+        })}
       </div>
 
       {/* Navigation Controls (Hidden if only 1 pool) */}
@@ -251,6 +276,9 @@ export default function PoolExplorer() {
           </button>
         </div>
       )}
+
+      {/* Sliding side drawer panel */}
+      <PoolDetailDrawer />
     </div>
   );
 }

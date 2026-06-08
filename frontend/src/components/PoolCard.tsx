@@ -6,9 +6,10 @@ import { PoolSummary, weiToGen, stateLabel, truncateAddress, timeRemaining } fro
 
 interface PoolCardProps {
   pool: PoolSummary;
+  isActive?: boolean;
 }
 
-export default function PoolCard({ pool }: PoolCardProps) {
+export default function PoolCard({ pool, isActive = true }: PoolCardProps) {
   const totals = pool.outcome_totals.map((t) => BigInt(t));
   const totalStake = totals.reduce((a, b) => a + b, 0n);
 
@@ -52,7 +53,7 @@ export default function PoolCard({ pool }: PoolCardProps) {
   };
 
   return (
-    <div className="relative flex flex-col justify-between p-6 sm:p-7 w-full h-[460px] bg-charcoal-medium/40 dark:bg-charcoal-medium/20 border border-charcoal-light/30 rounded-2xl shadow-xl transition-all duration-300 backdrop-blur-md select-none overflow-hidden">
+    <div className={`relative flex flex-col justify-between p-6 sm:p-7 w-full h-[460px] bg-charcoal-medium/40 dark:bg-charcoal-medium/20 border border-charcoal-light/30 rounded-2xl shadow-xl transition-all duration-300 backdrop-blur-md select-none overflow-hidden ${isActive ? 'cursor-pointer hover:border-charcoal-light/60 shadow-brand-gold/5 dark:hover:shadow-brand-magenta/5' : 'cursor-default'}`}>
       
       {/* Border Beam */}
       <div 
