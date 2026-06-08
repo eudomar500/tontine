@@ -1,9 +1,7 @@
 import { createClient } from 'genlayer-js';
 import { testnetBradbury } from 'genlayer-js/chains';
 import { rpcQueue, withRateLimitRetry } from './rpc';
-
-const CONTRACT_ADDRESS = '0x4cA9bd0d2130773dfA5C9d571d987E4929A23498';
-
+export const CONTRACT_ADDRESS = '0x4cA9bd0d2130773dfA5C9d571d987E4929A23498';
 const client = createClient({ chain: testnetBradbury });
 
 export interface PoolSummary {

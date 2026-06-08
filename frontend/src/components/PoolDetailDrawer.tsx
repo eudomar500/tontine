@@ -1,16 +1,86 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
-import { X, ExternalLink, Clock, Users, Globe, User, FileText, CheckCircle2, Loader2, AlertCircle } from 'lucide-react';
+import React, { useEffect, useState, useCallback } from 'react';
+import {
+  X,
+  ExternalLink,
+  Clock,
+  Users,
+  Globe,
+  User,
+  FileText,
+  CheckCircle2,
+  Loader2,
+  AlertCircle,
+  HelpCircle,
+} from 'lucide-react';
 import { usePoolsStore } from '../store/pools';
-import { getPool, Pool, weiToGen, stateLabel, truncateAddress } from '../services/contract';
+import { useWalletStore } from '../store/wallet';
+import { useContractWrite } from '../hooks/useContractWrite';
+import ConfirmModal from './ConfirmModal';
+import { getPool, Pool, weiToGen, stateLabel, truncateAddress, CONTRACT_ADDRESS } from '../services/contract';
+
+/**
+ * Parses GEN decimal string amount and converts it to a BigInt representation in wei units.
+ * Prevents precision errors with floating-point calculations.
+ */
+function genToWei(genAmount: string): bigint {
+  const clean = genAmount.trim();
+  if (!clean) return 0n;
+
+  const parts = clean.split('.');
+  const integerPart = parts[0] || '0';
+  let fractionPart = parts[1] || '';
+
+  // Pad/truncate fractional part to exactly 18 decimals
+  fractionPart = fractionPart.slice(0, 18).padEnd(18, '0');
+
+  const integerWei = BigInt(integerPart) * 1000000000000000000n;
+  const fractionWei = BigInt(fractionPart);
+
+  return integerWei + fractionWei;
+}
 
 export default function PoolDetailDrawer() {
   const selectedPoolId = usePoolsStore((state) => state.selectedPoolId);
   const setSelectedPoolId = usePoolsStore((state) => state.setSelectedPoolId);
+  const loadPools = usePoolsStore((state) => state.loadPools);
+
   const [pool, setPool] = useState<Pool | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Staking states
+  const [selectedOutcomeIndex, setSelectedOutcomeIndex] = useState<number | null>(null);
+  const [stakeAmount, setStakeAmount] = useState<string>('');
+  const [isConfirmOpen, setIsConfirmOpen] = useState<boolean>(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
+
+  // Wallet and custom write hook setup
+  const connectedAddress = useWalletStore((state) => state.connectedAddress);
+  const setWalletModalOpen = useWalletStore((state) => state.setModalOpen);
+
+  const fetchPoolDetail = useCallback(async (id: number) => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const detail = await getPool(id);
+      setPool(detail);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to retrieve pool details.');
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  const { write, status: writeStatus, txHash, error: writeError, reset: resetWrite } = useContractWrite({
+    onSuccess: () => {
+      if (selectedPoolId) {
+        fetchPoolDetail(selectedPoolId);
+      }
+      loadPools();
+    },
+  });
 
   // Esc key closes the drawer
   useEffect(() => {
@@ -33,33 +103,17 @@ export default function PoolDetailDrawer() {
       setPool(null);
       return;
     }
+    fetchPoolDetail(selectedPoolId);
+  }, [selectedPoolId, fetchPoolDetail]);
 
-    let isMounted = true;
-    const fetchPoolDetail = async () => {
-      setIsLoading(true);
-      setError(null);
-      try {
-        const detail = await getPool(selectedPoolId);
-        if (isMounted) {
-          setPool(detail);
-        }
-      } catch (err: any) {
-        if (isMounted) {
-          setError(err?.message || 'Failed to retrieve pool details.');
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoading(false);
-        }
-      }
-    };
-
-    fetchPoolDetail();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [selectedPoolId]);
+  // Reset local state when selection changes
+  useEffect(() => {
+    setSelectedOutcomeIndex(null);
+    setStakeAmount('');
+    setIsConfirmOpen(false);
+    setValidationError(null);
+    resetWrite();
+  }, [selectedPoolId, resetWrite]);
 
   const formatDate = (unix: number) => {
     return new Date(unix * 1000).toLocaleString('en-US', {
@@ -89,12 +143,52 @@ export default function PoolDetailDrawer() {
 
   const totals = pool?.outcomes.map((o) => BigInt(o.total_staked)) || [];
   const totalStake = totals.reduce((a, b) => a + b, 0n);
-  const proportions = pool ? totals.map((t) => {
-    if (totalStake === 0n) return 100 / pool.outcomes.length;
-    return Number((t * 10000n) / totalStake) / 100;
-  }) : [];
+  const proportions = pool
+    ? totals.map((t) => {
+        if (totalStake === 0n) return 100 / pool.outcomes.length;
+        return Number((t * 10000n) / totalStake) / 100;
+      })
+    : [];
 
   const isResolved = pool && (pool.state === 2 || pool.winning_outcome_index !== 255);
+
+  // Evaluation of on-chain requirements for join_pool writes
+  const isWhitelisted = pool && connectedAddress
+    ? pool.whitelist.some((addr) => addr.toLowerCase() === connectedAddress.toLowerCase())
+    : false;
+
+  const isOpen = pool ? pool.state === 0 : false;
+  const isExpired = pool ? Math.floor(Date.now() / 1000) >= pool.join_deadline : false;
+
+  const handleJoinClick = () => {
+    if (selectedOutcomeIndex === null) {
+      setValidationError('Please select an outcome');
+      return;
+    }
+    const val = parseFloat(stakeAmount);
+    if (isNaN(val) || val < 0.01) {
+      setValidationError('Minimum stake amount is 0.01 GEN');
+      return;
+    }
+    setValidationError(null);
+    setIsConfirmOpen(true);
+  };
+
+  const handleConfirmJoin = async () => {
+    if (!pool || selectedOutcomeIndex === null) return;
+    setIsConfirmOpen(false);
+
+    try {
+      await write({
+        address: CONTRACT_ADDRESS,
+        functionName: 'join_pool',
+        args: [BigInt(pool.pool_id), selectedOutcomeIndex],
+        value: genToWei(stakeAmount),
+      });
+    } catch (err) {
+      // Handled inside custom contract write hook
+    }
+  };
 
   return (
     <>
@@ -157,7 +251,7 @@ export default function PoolDetailDrawer() {
               <h4 className="text-sm font-bold text-foreground mb-1">Failed to Load Details</h4>
               <p className="text-xs text-foreground/50 mb-4">{error}</p>
               <button
-                onClick={() => selectedPoolId && getPool(selectedPoolId).then(setPool).catch((err) => setError(err.message))}
+                onClick={() => selectedPoolId && fetchPoolDetail(selectedPoolId)}
                 className="px-4 py-2 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light rounded-xl text-xs font-semibold text-foreground transition-all cursor-pointer"
               >
                 Retry
@@ -167,7 +261,7 @@ export default function PoolDetailDrawer() {
 
           {!isLoading && !error && pool && (
             <>
-              {/* Resolution Evidence Box (Rendered at top of details if resolved) */}
+              {/* Resolution Evidence Box */}
               {isResolved && (
                 <div className="bg-brand-gold/10 border border-brand-gold/25 rounded-2xl p-5 shadow-sm">
                   <div className="flex items-center gap-2 text-brand-gold mb-3 font-semibold text-sm font-display tracking-wide uppercase">
@@ -272,6 +366,273 @@ export default function PoolDetailDrawer() {
                 </div>
               </div>
 
+              {/* Join Pool Action UI Panel */}
+              <div className="border-t border-charcoal-light/20 pt-6 space-y-4">
+                {writeStatus !== 'idle' ? (
+                  // Transaction Tracking UX Panel
+                  <div className="bg-charcoal-medium/30 border border-charcoal-light/35 rounded-2xl p-5 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase">
+                        Transaction Tracking
+                      </span>
+                      {writeStatus === 'signing' && (
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-brand-gold bg-brand-gold/10 border border-brand-gold/25 px-2.5 py-0.5 rounded-full">
+                          Signing
+                        </span>
+                      )}
+                      {writeStatus === 'pending' && (
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-brand-gold bg-brand-gold/10 border border-brand-gold/25 px-2.5 py-0.5 rounded-full animate-pulse">
+                          Submitting
+                        </span>
+                      )}
+                      {writeStatus === 'accepted' && (
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-brand-gold bg-brand-gold/10 border border-brand-gold/25 px-2.5 py-0.5 rounded-full">
+                          Accepted
+                        </span>
+                      )}
+                      {writeStatus === 'finalized' && (
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-brand-gold bg-brand-gold/10 border border-brand-gold/25 px-2.5 py-0.5 rounded-full">
+                          Finalized
+                        </span>
+                      )}
+                      {writeStatus === 'error' && (
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-brand-magenta bg-brand-magenta/10 border border-brand-magenta/25 px-2.5 py-0.5 rounded-full">
+                          Failed
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="space-y-3">
+                      {writeStatus === 'signing' && (
+                        <div className="flex items-center gap-3">
+                          <Loader2 className="w-5 h-5 text-brand-gold animate-spin shrink-0" />
+                          <span className="text-sm font-medium text-foreground/80">
+                            Awaiting signature in your wallet...
+                          </span>
+                        </div>
+                      )}
+
+                      {writeStatus === 'pending' && (
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-3">
+                            <Loader2 className="w-5 h-5 text-brand-gold animate-spin shrink-0" />
+                            <span className="text-sm font-medium text-foreground/80">
+                              Transaction submitted. Awaiting block acceptance.
+                            </span>
+                          </div>
+                          {txHash && (
+                            <div className="text-[11px] font-mono text-foreground/50 truncate flex items-center justify-between bg-charcoal-dark/50 border border-charcoal-light/10 px-2 py-1.5 rounded-lg select-all">
+                              <span className="truncate">{txHash}</span>
+                              <a
+                                href={`https://explorer-bradbury.genlayer.com/tx/${txHash}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-foreground/40 hover:text-foreground transition-all ml-2 shrink-0"
+                                title="View transaction on explorer"
+                              >
+                                <ExternalLink className="w-3.5 h-3.5" />
+                              </a>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {writeStatus === 'accepted' && (
+                        <div className="space-y-3">
+                          <div className="flex items-center gap-3">
+                            <CheckCircle2 className="w-5 h-5 text-brand-gold shrink-0" />
+                            <span className="text-sm font-semibold text-foreground/95">
+                              Transaction accepted on-chain!
+                            </span>
+                          </div>
+                          <p className="text-xs text-foreground/50 leading-relaxed font-light">
+                            Your stake has been registered. The carousel and details have been refreshed. Bradbury finality takes 25 to 40 minutes. You can close this panel or track it in the Network widget.
+                          </p>
+                          {txHash && (
+                            <div className="text-[11px] font-mono text-foreground/50 truncate flex items-center justify-between bg-charcoal-dark/50 border border-charcoal-light/10 px-2 py-1.5 rounded-lg select-all">
+                              <span className="truncate">{txHash}</span>
+                              <a
+                                href={`https://explorer-bradbury.genlayer.com/tx/${txHash}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-foreground/40 hover:text-foreground transition-all ml-2 shrink-0"
+                                title="View transaction on explorer"
+                              >
+                                <ExternalLink className="w-3.5 h-3.5" />
+                              </a>
+                            </div>
+                          )}
+                          <button
+                            onClick={resetWrite}
+                            className="w-full py-2 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light text-xs font-semibold text-foreground rounded-xl transition-all cursor-pointer"
+                          >
+                            Dismiss
+                          </button>
+                        </div>
+                      )}
+
+                      {writeStatus === 'finalized' && (
+                        <div className="space-y-3">
+                          <div className="flex items-center gap-3">
+                            <CheckCircle2 className="w-5 h-5 text-brand-gold shrink-0" />
+                            <span className="text-sm font-semibold text-foreground/95">
+                              Transaction reached finality!
+                            </span>
+                          </div>
+                          {txHash && (
+                            <div className="text-[11px] font-mono text-foreground/50 truncate flex items-center justify-between bg-charcoal-dark/50 border border-charcoal-light/10 px-2 py-1.5 rounded-lg select-all">
+                              <span className="truncate">{txHash}</span>
+                              <a
+                                href={`https://explorer-bradbury.genlayer.com/tx/${txHash}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-foreground/40 hover:text-foreground transition-all ml-2 shrink-0"
+                                title="View transaction on explorer"
+                              >
+                                <ExternalLink className="w-3.5 h-3.5" />
+                              </a>
+                            </div>
+                          )}
+                          <button
+                            onClick={resetWrite}
+                            className="w-full py-2 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light text-xs font-semibold text-foreground rounded-xl transition-all cursor-pointer"
+                          >
+                            Dismiss
+                          </button>
+                        </div>
+                      )}
+
+                      {writeStatus === 'error' && (
+                        <div className="space-y-3">
+                          <div className="flex items-center gap-3">
+                            <AlertCircle className="w-5 h-5 text-brand-magenta shrink-0" />
+                            <span className="text-sm font-semibold text-foreground/90">
+                              Transaction failed
+                            </span>
+                          </div>
+                          <p className="text-xs text-brand-magenta/80 leading-relaxed max-h-24 overflow-y-auto font-mono bg-brand-magenta/5 border border-brand-magenta/10 p-2.5 rounded-lg select-text">
+                            {writeError?.message || 'Transaction was rejected or reverted.'}
+                          </p>
+                          <button
+                            onClick={resetWrite}
+                            className="w-full py-2 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light text-xs font-semibold text-foreground rounded-xl transition-all cursor-pointer"
+                          >
+                            Try Again
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : !connectedAddress ? (
+                  // Wallet connection prompt
+                  <div className="p-4 bg-charcoal-medium/20 border border-charcoal-light/20 rounded-2xl flex flex-col items-center text-center space-y-3">
+                    <p className="text-xs text-foreground/60 leading-relaxed font-light">
+                      Connect your wallet to participate in this prediction pool.
+                    </p>
+                    <button
+                      onClick={() => setWalletModalOpen(true)}
+                      className="px-4 py-2 bg-brand-gold hover:bg-brand-gold/90 text-charcoal-dark text-xs font-semibold rounded-xl transition-all cursor-pointer"
+                    >
+                      Connect Wallet
+                    </button>
+                  </div>
+                ) : !isOpen ? (
+                  // Guards: State Closed warning
+                  <div className="p-4 bg-charcoal-medium/10 border border-charcoal-light/15 rounded-2xl flex items-start gap-3 text-xs text-foreground/50">
+                    <HelpCircle className="w-4 h-4 text-foreground/40 shrink-0 mt-0.5" />
+                    <span>This pool is currently in {stateLabel(pool.state)} state and is no longer open for staking.</span>
+                  </div>
+                ) : isExpired ? (
+                  // Guards: Expired warning
+                  <div className="p-4 bg-charcoal-medium/10 border border-charcoal-light/15 rounded-2xl flex items-start gap-3 text-xs text-foreground/50">
+                    <HelpCircle className="w-4 h-4 text-foreground/40 shrink-0 mt-0.5" />
+                    <span>Staking entries are closed. The join deadline has passed.</span>
+                  </div>
+                ) : !isWhitelisted ? (
+                  // Guards: Whitelist restriction warning
+                  <div className="p-4 bg-brand-magenta/5 border border-brand-magenta/15 rounded-2xl flex items-start gap-3 text-xs text-brand-magenta/80">
+                    <AlertCircle className="w-4 h-4 text-brand-magenta/60 shrink-0 mt-0.5" />
+                    <span>Your connected wallet address is not whitelisted for this private prediction pool.</span>
+                  </div>
+                ) : (
+                  // Interactive Stake Form
+                  <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
+                    <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
+                      Stake on Outcome
+                    </span>
+
+                    {/* Outcome Choice Selector */}
+                    <div className="space-y-2">
+                      <span className="text-[10px] uppercase font-bold tracking-widest text-foreground/40 block">
+                        Select Outcome
+                      </span>
+                      <div className="grid grid-cols-2 gap-2">
+                        {pool.outcomes.map((outcome, idx) => {
+                          const isSelected = selectedOutcomeIndex === idx;
+                          return (
+                            <button
+                              key={idx}
+                              type="button"
+                              onClick={() => setSelectedOutcomeIndex(idx)}
+                              className={`px-4 py-3 rounded-xl border text-sm font-semibold tracking-wide transition-all cursor-pointer text-center truncate ${
+                                isSelected
+                                  ? 'bg-brand-gold text-charcoal-dark border-brand-gold shadow-md'
+                                  : 'bg-charcoal-dark/40 hover:bg-charcoal-light border-charcoal-light text-foreground/80'
+                              }`}
+                            >
+                              {outcome.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Stake Amount Input field */}
+                    <div className="space-y-2">
+                      <label className="text-[10px] uppercase font-bold tracking-widest text-foreground/40 block">
+                        Stake Amount (GEN)
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0.01"
+                          placeholder="0.00"
+                          value={stakeAmount}
+                          onChange={(e) => {
+                            setStakeAmount(e.target.value);
+                            setValidationError(null);
+                          }}
+                          className="w-full px-4 py-3 bg-charcoal-dark border border-charcoal-light focus:border-foreground/15 rounded-xl text-sm text-foreground focus:outline-none transition-colors pr-12 placeholder-foreground/20 font-semibold"
+                        />
+                        <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-foreground/40">
+                          GEN
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center text-[10px] text-foreground/45">
+                        <span>Minimum stake: 0.01 GEN</span>
+                        {stakeAmount && parseFloat(stakeAmount) > 0 && (
+                          <span>≈ {parseFloat(stakeAmount).toFixed(4)} GEN</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Validation / Action Triggers */}
+                    {validationError && (
+                      <p className="text-xs text-brand-magenta font-semibold">{validationError}</p>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={handleJoinClick}
+                      className="w-full py-3 bg-foreground hover:bg-warm-white text-background font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm"
+                    >
+                      Join Pool
+                    </button>
+                  </div>
+                )}
+              </div>
+
               {/* Timeline Deadlines */}
               <div className="space-y-3.5 border-t border-charcoal-light/20 pt-6">
                 <div className="flex items-center gap-2 text-xs font-semibold text-foreground/45 tracking-widest uppercase">
@@ -357,6 +718,37 @@ export default function PoolDetailDrawer() {
           )}
         </div>
       </div>
+
+      {/* Confirmation Modal */}
+      {pool && selectedOutcomeIndex !== null && (
+        <ConfirmModal
+          isOpen={isConfirmOpen}
+          onClose={() => setIsConfirmOpen(false)}
+          onConfirm={handleConfirmJoin}
+          title="Confirm Staking Action"
+        >
+          <div>
+            <p className="mb-3">Please review the details below before signing the transaction in your wallet:</p>
+            <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-2.5 mb-4">
+              <div className="flex justify-between text-xs">
+                <span className="text-foreground/45">Pool ID</span>
+                <span className="font-semibold text-foreground font-mono">#{pool.pool_id}</span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-foreground/45">Staking On</span>
+                <span className="font-semibold text-brand-gold">{pool.outcomes[selectedOutcomeIndex]?.label}</span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-foreground/45">Stake Amount</span>
+                <span className="font-bold text-foreground">{stakeAmount} GEN</span>
+              </div>
+            </div>
+            <p className="text-[11px] text-foreground/45 italic leading-snug">
+              Staking is final and cannot be undone. Transactions on GenLayer Bradbury have a finality window of 25 to 40 minutes.
+            </p>
+          </div>
+        </ConfirmModal>
+      )}
     </>
   );
 }
