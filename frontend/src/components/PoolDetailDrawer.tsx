@@ -202,8 +202,8 @@ export default function PoolDetailDrawer() {
 
       {/* Drawer Container */}
       <div
-        className={`fixed inset-y-0 right-0 w-full max-w-lg bg-charcoal-dark border-l border-charcoal-light/30 z-50 shadow-2xl transition-transform duration-300 ease-in-out transform flex flex-col ${
-          selectedPoolId ? 'translate-x-0' : 'translate-x-full'
+        className={`fixed inset-y-0 right-0 w-full max-w-lg bg-charcoal-dark border-l border-charcoal-light/30 z-50 shadow-2xl transition-all duration-300 ease-in-out flex flex-col ${
+          selectedPoolId ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0 pointer-events-none invisible'
         }`}
       >
         {/* Fixed Header Section */}
