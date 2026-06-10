@@ -56,6 +56,7 @@ export default function PoolDetailDrawer() {
   const [isConfirmOpen, setIsConfirmOpen] = useState<boolean>(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [userStake, setUserStake] = useState<Stake | null>(null);
+  const [activeAction, setActiveAction] = useState<'join' | 'increase' | 'resolve' | 'claim' | null>(null);
 
   // Wallet and custom write hook setup
   const connectedAddress = useWalletStore((state) => state.connectedAddress);
@@ -158,6 +159,7 @@ export default function PoolDetailDrawer() {
     setValidationError(null);
     resetWrite();
     setUserStake(null);
+    setActiveAction(null);
   }, [selectedPoolId, resetWrite]);
 
   const formatDate = (unix: number) => {
@@ -204,8 +206,26 @@ export default function PoolDetailDrawer() {
 
   const isOpen = pool ? pool.state === 0 : false;
   const isExpired = pool ? Math.floor(Date.now() / 1000) >= pool.join_deadline : false;
+  const isResolutionReady = pool ? Math.floor(Date.now() / 1000) >= pool.resolution_deadline : false;
 
   const hasJoined = userStake !== null;
+
+  // Estimate winnings payout: share = (stake * total_pool) / winning_pool
+  const winningOutcome = pool && pool.winning_outcome_index !== 255 ? pool.outcomes[pool.winning_outcome_index] : null;
+  let estimatedPayoutStr = '';
+  if (pool && userStake && pool.state === 2 && pool.winning_outcome_index !== 255 && winningOutcome) {
+    try {
+      const stakeVal = BigInt(userStake.amount);
+      const totalPoolVal = BigInt(pool.total_pool);
+      const winningPoolVal = BigInt(winningOutcome.total_staked);
+      if (winningPoolVal > 0n) {
+        const payoutWei = (stakeVal * totalPoolVal) / winningPoolVal;
+        estimatedPayoutStr = weiToGen(payoutWei.toString());
+      }
+    } catch (err) {
+      // Ignore calculation errors
+    }
+  }
 
   const handleJoinClick = () => {
     if (selectedOutcomeIndex === null) {
@@ -218,6 +238,7 @@ export default function PoolDetailDrawer() {
       return;
     }
     setValidationError(null);
+    setActiveAction('join');
     setIsConfirmOpen(true);
   };
 
@@ -228,6 +249,19 @@ export default function PoolDetailDrawer() {
       return;
     }
     setValidationError(null);
+    setActiveAction('increase');
+    setIsConfirmOpen(true);
+  };
+
+  const handleResolveClick = () => {
+    setValidationError(null);
+    setActiveAction('resolve');
+    setIsConfirmOpen(true);
+  };
+
+  const handleClaimClick = () => {
+    setValidationError(null);
+    setActiveAction('claim');
     setIsConfirmOpen(true);
   };
 
@@ -236,20 +270,32 @@ export default function PoolDetailDrawer() {
     setIsConfirmOpen(false);
 
     try {
-      if (hasJoined) {
+      if (activeAction === 'increase') {
         await write({
           address: CONTRACT_ADDRESS,
           functionName: 'increase_stake',
           args: [BigInt(pool.pool_id)],
           value: genToWei(stakeAmount),
         });
-      } else {
+      } else if (activeAction === 'join') {
         if (selectedOutcomeIndex === null) return;
         await write({
           address: CONTRACT_ADDRESS,
           functionName: 'join_pool',
           args: [BigInt(pool.pool_id), selectedOutcomeIndex],
           value: genToWei(stakeAmount),
+        });
+      } else if (activeAction === 'resolve') {
+        await write({
+          address: CONTRACT_ADDRESS,
+          functionName: 'request_resolution',
+          args: [BigInt(pool.pool_id)],
+        });
+      } else if (activeAction === 'claim') {
+        await write({
+          address: CONTRACT_ADDRESS,
+          functionName: 'claim_winnings',
+          args: [BigInt(pool.pool_id)],
         });
       }
     } catch (err) {
@@ -603,173 +649,262 @@ export default function PoolDetailDrawer() {
                       Connect Wallet
                     </button>
                   </div>
-                ) : !isOpen ? (
-                  // Guards: State Closed warning
-                  <div className="p-4 bg-charcoal-medium/10 border border-charcoal-light/15 rounded-2xl flex items-start gap-3 text-xs text-foreground/50">
-                    <HelpCircle className="w-4 h-4 text-foreground/40 shrink-0 mt-0.5" />
-                    <span>This pool is currently in {stateLabel(pool.state)} state and is no longer open for staking.</span>
-                  </div>
-                ) : isExpired ? (
-                  // Guards: Expired warning
-                  <div className="p-4 bg-charcoal-medium/10 border border-charcoal-light/15 rounded-2xl flex items-start gap-3 text-xs text-foreground/50">
-                    <HelpCircle className="w-4 h-4 text-foreground/40 shrink-0 mt-0.5" />
-                    <span>Staking entries are closed. The join deadline has passed.</span>
-                  </div>
-                ) : !isWhitelisted ? (
-                  // Guards: Whitelist restriction warning
-                  <div className="p-4 bg-brand-magenta/5 border border-brand-magenta/15 rounded-2xl flex items-start gap-3 text-xs text-brand-magenta/80">
-                    <AlertCircle className="w-4 h-4 text-brand-magenta/60 shrink-0 mt-0.5" />
-                    <span>Your connected wallet address is not whitelisted for this private prediction pool.</span>
-                  </div>
-                ) : !hasJoined ? (
-                  // Interactive Stake Form (Join)
-                  <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
-                    <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
-                      Stake on Outcome
-                    </span>
-
-                    {/* Outcome Choice Selector */}
-                    <div className="space-y-2">
-                      <span className="text-[10px] uppercase font-bold tracking-widest text-foreground/40 block">
-                        Select Outcome
-                      </span>
-                      <div className="grid grid-cols-2 gap-2">
-                        {pool.outcomes.map((outcome, idx) => {
-                          const isSelected = selectedOutcomeIndex === idx;
-                          return (
-                            <button
-                              key={idx}
-                              type="button"
-                              onClick={() => setSelectedOutcomeIndex(idx)}
-                              className={`px-4 py-3 rounded-xl border text-sm font-semibold tracking-wide transition-all cursor-pointer text-center truncate ${
-                                isSelected
-                                  ? 'bg-brand-gold text-charcoal-dark border-brand-gold shadow-md'
-                                  : 'bg-charcoal-dark/40 hover:bg-charcoal-light border-charcoal-light text-foreground/80'
-                              }`}
-                            >
-                              {outcome.label}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    {/* Stake Amount Input field */}
-                    <div className="space-y-2">
-                      <label className="text-[10px] uppercase font-bold tracking-widest text-foreground/40 block">
-                        Stake Amount (GEN)
-                      </label>
-                      <div className="relative">
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0.01"
-                          placeholder="0.00"
-                          value={stakeAmount}
-                          onChange={(e) => {
-                            setStakeAmount(e.target.value);
-                            setValidationError(null);
-                          }}
-                          className="w-full px-4 py-3 bg-charcoal-dark border border-charcoal-light focus:border-foreground/15 rounded-xl text-sm text-foreground focus:outline-none transition-colors pr-12 placeholder-foreground/20 font-semibold"
-                        />
-                        <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-foreground/40">
-                          GEN
+                ) : pool.state === 0 ? (
+                  // State 0: OPEN
+                  isResolutionReady ? (
+                    isWhitelisted ? (
+                      // Resolution Action Panel
+                      <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
+                        <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
+                          Pool Resolution
                         </span>
+                        <p className="text-xs text-foreground/60 leading-relaxed font-light">
+                          The resolution deadline has passed. As a whitelisted participant, you can trigger the GenLayer LLM oracle to resolve this pool.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={handleResolveClick}
+                          className="w-full py-3 bg-brand-gold hover:bg-brand-gold/90 text-charcoal-dark font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm"
+                        >
+                          Request Resolution
+                        </button>
                       </div>
-                      <div className="flex justify-between items-center text-[10px] text-foreground/45">
-                        <span>Minimum stake: 0.01 GEN</span>
-                        {stakeAmount && parseFloat(stakeAmount) > 0 && (
-                          <span>≈ {parseFloat(stakeAmount).toFixed(4)} GEN</span>
-                        )}
+                    ) : (
+                      // Resolution available, but not whitelisted
+                      <div className="p-4 bg-charcoal-medium/10 border border-charcoal-light/15 rounded-2xl flex items-start gap-3 text-xs text-foreground/50">
+                        <HelpCircle className="w-4 h-4 text-foreground/40 shrink-0 mt-0.5" />
+                        <span>The staking deadline has passed. Waiting for a whitelisted participant to request resolution.</span>
                       </div>
+                    )
+                  ) : isExpired ? (
+                    // Staking entries closed, resolution target not yet reached
+                    <div className="space-y-3.5">
+                      <div className="p-4 bg-charcoal-medium/10 border border-charcoal-light/15 rounded-2xl flex items-start gap-3 text-xs text-foreground/50">
+                        <HelpCircle className="w-4 h-4 text-foreground/40 shrink-0 mt-0.5" />
+                        <span>Staking entries are closed. The join deadline has passed.</span>
+                      </div>
+                      {isWhitelisted && (
+                        <div className="p-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl text-xs text-foreground/60 leading-relaxed font-light">
+                          Resolution will become available after {formatDate(pool.resolution_deadline)}.
+                        </div>
+                      )}
                     </div>
+                  ) : !isWhitelisted ? (
+                    // Whitelist guard
+                    <div className="p-4 bg-brand-magenta/5 border border-brand-magenta/15 rounded-2xl flex items-start gap-3 text-xs text-brand-magenta/80">
+                      <AlertCircle className="w-4 h-4 text-brand-magenta/60 shrink-0 mt-0.5" />
+                      <span>Your connected wallet address is not whitelisted for this private prediction pool.</span>
+                    </div>
+                  ) : !hasJoined ? (
+                    // Interactive Stake Form (Join)
+                    <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
+                      <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
+                        Stake on Outcome
+                      </span>
 
-                    {/* Validation / Action Triggers */}
-                    {validationError && (
-                      <p className="text-xs text-brand-magenta font-semibold">{validationError}</p>
-                    )}
+                      {/* Outcome Choice Selector */}
+                      <div className="space-y-2">
+                        <span className="text-[10px] uppercase font-bold tracking-widest text-foreground/40 block">
+                          Select Outcome
+                        </span>
+                        <div className="grid grid-cols-2 gap-2">
+                          {pool.outcomes.map((outcome, idx) => {
+                            const isSelected = selectedOutcomeIndex === idx;
+                            return (
+                              <button
+                                key={idx}
+                                type="button"
+                                onClick={() => setSelectedOutcomeIndex(idx)}
+                                className={`px-4 py-3 rounded-xl border text-sm font-semibold tracking-wide transition-all cursor-pointer text-center truncate ${
+                                  isSelected
+                                    ? 'bg-brand-gold text-charcoal-dark border-brand-gold shadow-md'
+                                    : 'bg-charcoal-dark/40 hover:bg-charcoal-light border-charcoal-light text-foreground/80'
+                                }`}
+                              >
+                                {outcome.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
 
-                    <button
-                      type="button"
-                      onClick={handleJoinClick}
-                      className="w-full py-3 bg-foreground hover:bg-warm-white text-background font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm"
-                    >
-                      Join Pool
-                    </button>
+                      {/* Stake Amount Input field */}
+                      <div className="space-y-2">
+                        <label className="text-[10px] uppercase font-bold tracking-widest text-foreground/40 block">
+                          Stake Amount (GEN)
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0.01"
+                            placeholder="0.00"
+                            value={stakeAmount}
+                            onChange={(e) => {
+                              setStakeAmount(e.target.value);
+                              setValidationError(null);
+                            }}
+                            className="w-full px-4 py-3 bg-charcoal-dark border border-charcoal-light focus:border-foreground/15 rounded-xl text-sm text-foreground focus:outline-none transition-colors pr-12 placeholder-foreground/20 font-semibold"
+                          />
+                          <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-foreground/40">
+                            GEN
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center text-[10px] text-foreground/45">
+                          <span>Minimum stake: 0.01 GEN</span>
+                          {stakeAmount && parseFloat(stakeAmount) > 0 && (
+                            <span>≈ {parseFloat(stakeAmount).toFixed(4)} GEN</span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Validation / Action Triggers */}
+                      {validationError && (
+                        <p className="text-xs text-brand-magenta font-semibold">{validationError}</p>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={handleJoinClick}
+                        className="w-full py-3 bg-foreground hover:bg-warm-white text-background font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm"
+                      >
+                        Join Pool
+                      </button>
+                    </div>
+                  ) : (
+                    // Interactive Stake Form (Increase)
+                    <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
+                      <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
+                        Increase Stake
+                      </span>
+
+                      {/* Active Outcome Indicator (Read-only Selector) */}
+                      <div className="space-y-2">
+                        <span className="text-[10px] uppercase font-bold tracking-widest text-foreground/40 block">
+                          Your Staked Outcome
+                        </span>
+                        <div className="grid grid-cols-2 gap-2">
+                          {pool.outcomes.map((outcome, idx) => {
+                            const isSelected = userStake.outcome_index === idx;
+                            return (
+                              <button
+                                key={idx}
+                                type="button"
+                                disabled
+                                className={`px-4 py-3 rounded-xl border text-sm font-semibold tracking-wide text-center truncate select-none ${
+                                  isSelected
+                                    ? 'bg-brand-gold text-charcoal-dark border-brand-gold shadow-md'
+                                    : 'bg-charcoal-dark/40 border-charcoal-light text-foreground/20'
+                                }`}
+                              >
+                                {outcome.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Stake Amount Input field */}
+                      <div className="space-y-2">
+                        <label className="text-[10px] uppercase font-bold tracking-widest text-foreground/40 block">
+                          Additional Stake (GEN)
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0.01"
+                            placeholder="0.00"
+                            value={stakeAmount}
+                            onChange={(e) => {
+                              setStakeAmount(e.target.value);
+                              setValidationError(null);
+                            }}
+                            className="w-full px-4 py-3 bg-charcoal-dark border border-charcoal-light focus:border-foreground/15 rounded-xl text-sm text-foreground focus:outline-none transition-colors pr-12 placeholder-foreground/20 font-semibold"
+                          />
+                          <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-foreground/40">
+                            GEN
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center text-[10px] text-foreground/45">
+                          <span>Current stake: {weiToGen(userStake.amount)} GEN</span>
+                          <span>Minimum: 0.01 GEN</span>
+                        </div>
+                      </div>
+
+                      {/* Validation / Action Triggers */}
+                      {validationError && (
+                        <p className="text-xs text-brand-magenta font-semibold">{validationError}</p>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={handleIncreaseClick}
+                        className="w-full py-3 bg-foreground hover:bg-warm-white text-background font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm"
+                      >
+                        Increase Stake
+                      </button>
+                    </div>
+                  )
+                ) : pool.state === 1 ? (
+                  // State 1: RESOLVING
+                  <div className="p-5 bg-brand-gold/5 border border-brand-gold/15 rounded-2xl flex flex-col items-center text-center space-y-3">
+                    <Loader2 className="w-6 h-6 text-brand-gold animate-spin" />
+                    <h5 className="text-xs font-bold text-brand-gold uppercase tracking-wider">Resolving Pool</h5>
+                    <p className="text-[11px] text-foreground/60 leading-relaxed font-light">
+                      The GenLayer LLM oracle is reading resolution sources to achieve consensus. This process can take several minutes.
+                    </p>
+                  </div>
+                ) : pool.state === 2 ? (
+                  // State 2: SETTLED
+                  hasJoined ? (
+                    userStake.outcome_index === pool.winning_outcome_index ? (
+                      userStake.claimed ? (
+                        // Claimed Badge
+                        <div className="p-4 bg-foreground/5 border border-foreground/15 rounded-2xl flex items-center justify-center gap-2.5 text-xs text-foreground/80 font-semibold">
+                          <CheckCircle2 className="w-4 h-4 text-brand-gold" />
+                          <span>Winnings Claimed</span>
+                        </div>
+                      ) : (
+                        // Claim Action Panel
+                        <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
+                          <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
+                            Claim Winnings
+                          </span>
+                          <div className="space-y-1">
+                            <span className="text-[10px] uppercase font-bold tracking-widest text-foreground/40 block">Estimated Winnings Payout</span>
+                            <span className="text-lg font-bold text-brand-gold block">{estimatedPayoutStr} GEN</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={handleClaimClick}
+                            className="w-full py-3 bg-brand-gold hover:bg-brand-gold/90 text-charcoal-dark font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm"
+                          >
+                            Claim Winnings
+                          </button>
+                        </div>
+                      )
+                    ) : (
+                      // Losing Outcome Notice
+                      <div className="p-4 bg-charcoal-medium/10 border border-charcoal-light/15 rounded-2xl text-xs text-foreground/50 text-center font-light leading-relaxed">
+                        This agreement settled on outcome <span className="font-semibold text-brand-gold">"{winningOutcome?.label || `Index #${pool.winning_outcome_index}`}"</span>. Your staked outcome did not win.
+                      </div>
+                    )
+                  ) : (
+                    // Did not join
+                    <div className="p-4 bg-charcoal-medium/10 border border-charcoal-light/15 rounded-2xl text-xs text-foreground/50 text-center font-light leading-relaxed">
+                      This pool has settled. You did not participate in this agreement.
+                    </div>
+                  )
+                ) : pool.state === 3 ? (
+                  // State 3: REFUNDED
+                  <div className="p-4 bg-charcoal-medium/10 border border-charcoal-light/15 rounded-2xl text-xs text-foreground/50 text-center font-light leading-relaxed">
+                    This pool has been refunded.
                   </div>
                 ) : (
-                  // Interactive Stake Form (Increase)
-                  <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
-                    <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
-                      Increase Stake
-                    </span>
-
-                    {/* Active Outcome Indicator (Read-only Selector) */}
-                    <div className="space-y-2">
-                      <span className="text-[10px] uppercase font-bold tracking-widest text-foreground/40 block">
-                        Your Staked Outcome
-                      </span>
-                      <div className="grid grid-cols-2 gap-2">
-                        {pool.outcomes.map((outcome, idx) => {
-                          const isSelected = userStake.outcome_index === idx;
-                          return (
-                            <button
-                              key={idx}
-                              type="button"
-                              disabled
-                              className={`px-4 py-3 rounded-xl border text-sm font-semibold tracking-wide text-center truncate select-none ${
-                                isSelected
-                                  ? 'bg-brand-gold text-charcoal-dark border-brand-gold shadow-md'
-                                  : 'bg-charcoal-dark/40 border-charcoal-light text-foreground/20'
-                              }`}
-                            >
-                              {outcome.label}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    {/* Stake Amount Input field */}
-                    <div className="space-y-2">
-                      <label className="text-[10px] uppercase font-bold tracking-widest text-foreground/40 block">
-                        Additional Stake (GEN)
-                      </label>
-                      <div className="relative">
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0.01"
-                          placeholder="0.00"
-                          value={stakeAmount}
-                          onChange={(e) => {
-                            setStakeAmount(e.target.value);
-                            setValidationError(null);
-                          }}
-                          className="w-full px-4 py-3 bg-charcoal-dark border border-charcoal-light focus:border-foreground/15 rounded-xl text-sm text-foreground focus:outline-none transition-colors pr-12 placeholder-foreground/20 font-semibold"
-                        />
-                        <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-foreground/40">
-                          GEN
-                        </span>
-                      </div>
-                      <div className="flex justify-between items-center text-[10px] text-foreground/45">
-                        <span>Current stake: {weiToGen(userStake.amount)} GEN</span>
-                        <span>Minimum: 0.01 GEN</span>
-                      </div>
-                    </div>
-
-                    {/* Validation / Action Triggers */}
-                    {validationError && (
-                      <p className="text-xs text-brand-magenta font-semibold">{validationError}</p>
-                    )}
-
-                    <button
-                      type="button"
-                      onClick={handleIncreaseClick}
-                      className="w-full py-3 bg-foreground hover:bg-warm-white text-background font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm"
-                    >
-                      Increase Stake
-                    </button>
+                  // State 4: EMERGENCY or default
+                  <div className="p-4 bg-charcoal-medium/10 border border-charcoal-light/15 rounded-2xl text-xs text-foreground/50 text-center font-light leading-relaxed">
+                    This pool is in state: {stateLabel(pool.state)}.
                   </div>
                 )}
               </div>
@@ -861,41 +996,100 @@ export default function PoolDetailDrawer() {
       </div>
 
       {/* Confirmation Modal */}
-      {pool && (hasJoined || selectedOutcomeIndex !== null) && (
+      {pool && (
         <ConfirmModal
           isOpen={isConfirmOpen}
           onClose={() => setIsConfirmOpen(false)}
           onConfirm={handleConfirmAction}
-          title="Confirm Staking Action"
+          title={
+            activeAction === 'resolve'
+              ? 'Confirm Resolution Request'
+              : activeAction === 'claim'
+              ? 'Confirm Winnings Claim'
+              : 'Confirm Staking Action'
+          }
         >
-          <div>
-            <p className="mb-3">Please review the details below before signing the transaction in your wallet:</p>
-            <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-2.5 mb-4">
-              <div className="flex justify-between text-xs">
-                <span className="text-foreground/45">Pool ID</span>
-                <span className="font-semibold text-foreground font-mono">#{pool.pool_id}</span>
+          {activeAction === 'resolve' ? (
+            <div>
+              <p className="mb-3">Please review the details below before signing the transaction in your wallet:</p>
+              <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-2.5 mb-4">
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">Pool ID</span>
+                  <span className="font-semibold text-foreground font-mono">#{pool.pool_id}</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">Action</span>
+                  <span className="font-semibold text-brand-gold font-display uppercase">Request Resolution</span>
+                </div>
               </div>
-              <div className="flex justify-between text-xs">
-                <span className="text-foreground/45">
-                  {hasJoined ? 'Increasing Stake On' : 'Staking On'}
-                </span>
-                <span className="font-semibold text-brand-gold font-display">
-                  {hasJoined
-                    ? pool.outcomes[userStake.outcome_index]?.label
-                    : pool.outcomes[selectedOutcomeIndex!]?.label}
-                </span>
-              </div>
-              <div className="flex justify-between text-xs">
-                <span className="text-foreground/45">
-                  {hasJoined ? 'Added Stake Amount' : 'Stake Amount'}
-                </span>
-                <span className="font-bold text-foreground">{stakeAmount} GEN</span>
-              </div>
+              <p className="text-xs text-foreground/75 mb-3 leading-relaxed">
+                This will trigger the consensus of the GenLayer LLM oracle to read the verification sources and decide the winning outcome of this prediction pool.
+              </p>
+              <p className="text-[11px] text-foreground/45 italic leading-snug">
+                This process involves fetching web resources, processing LLM queries, and reaching consensus. It can take several minutes to complete on-chain.
+              </p>
             </div>
-            <p className="text-[11px] text-foreground/45 italic leading-snug">
-              Staking is final and cannot be undone. Transactions on GenLayer Bradbury have a finality window of 25 to 40 minutes.
-            </p>
-          </div>
+          ) : activeAction === 'claim' ? (
+            <div>
+              <p className="mb-3">Please review the details below before signing the transaction in your wallet:</p>
+              <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-2.5 mb-4">
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">Pool ID</span>
+                  <span className="font-semibold text-foreground font-mono">#{pool.pool_id}</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">Your Staked Outcome</span>
+                  <span className="font-semibold text-brand-gold font-display">
+                    {pool.outcomes[userStake?.outcome_index ?? 0]?.label}
+                  </span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">Your Stake</span>
+                  <span className="font-bold text-foreground">
+                    {userStake ? weiToGen(userStake.amount) : '0'} GEN
+                  </span>
+                </div>
+                {estimatedPayoutStr && (
+                  <div className="flex justify-between text-xs border-t border-charcoal-light/15 pt-2.5">
+                    <span className="text-foreground/45">Estimated Payout</span>
+                    <span className="font-bold text-brand-gold">{estimatedPayoutStr} GEN</span>
+                  </div>
+                )}
+              </div>
+              <p className="text-[11px] text-foreground/45 italic leading-snug">
+                Claiming is irreversible. Transactions on GenLayer Bradbury have a finality window of 25 to 40 minutes.
+              </p>
+            </div>
+          ) : (
+            <div>
+              <p className="mb-3">Please review the details below before signing the transaction in your wallet:</p>
+              <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-2.5 mb-4">
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">Pool ID</span>
+                  <span className="font-semibold text-foreground font-mono">#{pool.pool_id}</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">
+                    {activeAction === 'increase' ? 'Increasing Stake On' : 'Staking On'}
+                  </span>
+                  <span className="font-semibold text-brand-gold font-display">
+                    {activeAction === 'increase'
+                      ? pool.outcomes[userStake?.outcome_index ?? 0]?.label
+                      : pool.outcomes[selectedOutcomeIndex!]?.label}
+                  </span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">
+                    {activeAction === 'increase' ? 'Added Stake Amount' : 'Stake Amount'}
+                  </span>
+                  <span className="font-bold text-foreground">{stakeAmount} GEN</span>
+                </div>
+              </div>
+              <p className="text-[11px] text-foreground/45 italic leading-snug">
+                Staking is final and cannot be undone. Transactions on GenLayer Bradbury have a finality window of 25 to 40 minutes.
+              </p>
+            </div>
+          )}
         </ConfirmModal>
       )}
     </>
