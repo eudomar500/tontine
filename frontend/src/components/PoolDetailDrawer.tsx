@@ -85,14 +85,24 @@ export default function PoolDetailDrawer() {
     } catch (err: any) {
       const errMsg = err?.message?.toLowerCase() || '';
       const errDetails = err?.details?.toLowerCase() || '';
-      const isNoStake = errMsg.includes('no stake') || errDetails.includes('no stake');
-      
-      if (isNoStake) {
-        setUserStake(null);
-      } else {
+      const errData = (err?.data || err?.cause?.data || '').toLowerCase();
+      const errStr = JSON.stringify(err || '').toLowerCase();
+
+      // Check for 'no stake' string or raw hex bytes representing it (0x6e6f207374616b65)
+      // to handle RPC variations and raw VM result return data.
+      const isNoStake =
+        errMsg.includes('no stake') ||
+        errDetails.includes('no stake') ||
+        errMsg.includes('0x6e, 0x6f, 0x20, 0x73, 0x74, 0x61, 0x6b, 0x65') ||
+        errDetails.includes('0x6e, 0x6f, 0x20, 0x73, 0x74, 0x61, 0x6b, 0x65') ||
+        errData.includes('6e6f207374616b65') ||
+        errStr.includes('no stake') ||
+        errStr.includes('6e6f207374616b65') ||
+        errStr.includes('0x6e, 0x6f, 0x20, 0x73, 0x74, 0x61, 0x6b, 0x65');
+
+      setUserStake(null);
+      if (!isNoStake) {
         console.error('Failed to fetch user stake details:', err);
-        setError(err?.message || 'Failed to retrieve user stake details.');
-        setUserStake(null);
       }
     }
   }, []);
