@@ -1,4 +1,5 @@
 import { createClient } from 'genlayer-js';
+import { CalldataAddress } from 'genlayer-js/types';
 import { testnetBradbury } from 'genlayer-js/chains';
 import { rpcQueue, withRateLimitRetry } from './rpc';
 export const CONTRACT_ADDRESS = '0x4cA9bd0d2130773dfA5C9d571d987E4929A23498';
@@ -186,3 +187,40 @@ export async function getPool(poolId: number): Promise<Pool> {
     })
   );
 }
+
+export interface Stake {
+  wallet: string;
+  outcome_index: number;
+  amount: string;
+  claimed: boolean;
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const clean = hex.startsWith('0x') ? hex.slice(2) : hex;
+  if (clean.length !== 40) {
+    throw new Error(`Invalid address hex length: ${hex}`);
+  }
+  const bytes = new Uint8Array(20);
+  for (let i = 0; i < 20; i++) {
+    bytes[i] = parseInt(clean.substring(i * 2, i * 2 + 2), 16);
+  }
+  return bytes;
+}
+
+/**
+ * Fetches the stake details for a specific wallet inside a pool.
+ */
+export async function getStake(poolId: number, wallet: string): Promise<Stake> {
+  const calldataAddr = new CalldataAddress(hexToBytes(wallet));
+  return rpcQueue.enqueue(() =>
+    withRateLimitRetry(async () => {
+      const res = await client.readContract({
+        address: CONTRACT_ADDRESS,
+        functionName: 'get_stake',
+        args: [poolId, calldataAddr],
+      });
+      return res as unknown as Stake;
+    })
+  );
+}
+

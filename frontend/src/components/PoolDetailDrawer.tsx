@@ -18,7 +18,7 @@ import { usePoolsStore } from '../store/pools';
 import { useWalletStore } from '../store/wallet';
 import { useContractWrite } from '../hooks/useContractWrite';
 import ConfirmModal from './ConfirmModal';
-import { getPool, Pool, weiToGen, stateLabel, truncateAddress, CONTRACT_ADDRESS } from '../services/contract';
+import { getPool, Pool, weiToGen, stateLabel, truncateAddress, CONTRACT_ADDRESS, getStake, Stake } from '../services/contract';
 
 /**
  * Parses GEN decimal string amount and converts it to a BigInt representation in wei units.
@@ -55,6 +55,7 @@ export default function PoolDetailDrawer() {
   const [stakeAmount, setStakeAmount] = useState<string>('');
   const [isConfirmOpen, setIsConfirmOpen] = useState<boolean>(false);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [userStake, setUserStake] = useState<Stake | null>(null);
 
   // Wallet and custom write hook setup
   const connectedAddress = useWalletStore((state) => state.connectedAddress);
@@ -73,10 +74,34 @@ export default function PoolDetailDrawer() {
     }
   }, []);
 
+  const fetchUserStake = useCallback(async (poolId: number, address: string | null) => {
+    if (!address) {
+      setUserStake(null);
+      return;
+    }
+    try {
+      const stake = await getStake(poolId, address);
+      setUserStake(stake);
+    } catch (err: any) {
+      const errMsg = err?.message?.toLowerCase() || '';
+      const errDetails = err?.details?.toLowerCase() || '';
+      const isNoStake = errMsg.includes('no stake') || errDetails.includes('no stake');
+      
+      if (isNoStake) {
+        setUserStake(null);
+      } else {
+        console.error('Failed to fetch user stake details:', err);
+        setError(err?.message || 'Failed to retrieve user stake details.');
+        setUserStake(null);
+      }
+    }
+  }, []);
+
   const { write, status: writeStatus, txHash, error: writeError, reset: resetWrite } = useContractWrite({
     onSuccess: () => {
       if (selectedPoolId) {
         fetchPoolDetail(selectedPoolId);
+        fetchUserStake(selectedPoolId, connectedAddress);
       }
       loadPools();
     },
@@ -106,6 +131,15 @@ export default function PoolDetailDrawer() {
     fetchPoolDetail(selectedPoolId);
   }, [selectedPoolId, fetchPoolDetail]);
 
+  // Fetch user stake details dynamically upon selection or wallet changes
+  useEffect(() => {
+    if (!selectedPoolId) {
+      setUserStake(null);
+      return;
+    }
+    fetchUserStake(selectedPoolId, connectedAddress);
+  }, [selectedPoolId, connectedAddress, fetchUserStake]);
+
   // Reset local state when selection changes
   useEffect(() => {
     setSelectedOutcomeIndex(null);
@@ -113,6 +147,7 @@ export default function PoolDetailDrawer() {
     setIsConfirmOpen(false);
     setValidationError(null);
     resetWrite();
+    setUserStake(null);
   }, [selectedPoolId, resetWrite]);
 
   const formatDate = (unix: number) => {
@@ -160,6 +195,8 @@ export default function PoolDetailDrawer() {
   const isOpen = pool ? pool.state === 0 : false;
   const isExpired = pool ? Math.floor(Date.now() / 1000) >= pool.join_deadline : false;
 
+  const hasJoined = userStake !== null;
+
   const handleJoinClick = () => {
     if (selectedOutcomeIndex === null) {
       setValidationError('Please select an outcome');
@@ -174,17 +211,37 @@ export default function PoolDetailDrawer() {
     setIsConfirmOpen(true);
   };
 
-  const handleConfirmJoin = async () => {
-    if (!pool || selectedOutcomeIndex === null) return;
+  const handleIncreaseClick = () => {
+    const val = parseFloat(stakeAmount);
+    if (isNaN(val) || val < 0.01) {
+      setValidationError('Minimum stake amount is 0.01 GEN');
+      return;
+    }
+    setValidationError(null);
+    setIsConfirmOpen(true);
+  };
+
+  const handleConfirmAction = async () => {
+    if (!pool) return;
     setIsConfirmOpen(false);
 
     try {
-      await write({
-        address: CONTRACT_ADDRESS,
-        functionName: 'join_pool',
-        args: [BigInt(pool.pool_id), selectedOutcomeIndex],
-        value: genToWei(stakeAmount),
-      });
+      if (hasJoined) {
+        await write({
+          address: CONTRACT_ADDRESS,
+          functionName: 'increase_stake',
+          args: [BigInt(pool.pool_id)],
+          value: genToWei(stakeAmount),
+        });
+      } else {
+        if (selectedOutcomeIndex === null) return;
+        await write({
+          address: CONTRACT_ADDRESS,
+          functionName: 'join_pool',
+          args: [BigInt(pool.pool_id), selectedOutcomeIndex],
+          value: genToWei(stakeAmount),
+        });
+      }
     } catch (err) {
       // Handled inside custom contract write hook
     }
@@ -554,8 +611,8 @@ export default function PoolDetailDrawer() {
                     <AlertCircle className="w-4 h-4 text-brand-magenta/60 shrink-0 mt-0.5" />
                     <span>Your connected wallet address is not whitelisted for this private prediction pool.</span>
                   </div>
-                ) : (
-                  // Interactive Stake Form
+                ) : !hasJoined ? (
+                  // Interactive Stake Form (Join)
                   <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
                     <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
                       Stake on Outcome
@@ -628,6 +685,80 @@ export default function PoolDetailDrawer() {
                       className="w-full py-3 bg-foreground hover:bg-warm-white text-background font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm"
                     >
                       Join Pool
+                    </button>
+                  </div>
+                ) : (
+                  // Interactive Stake Form (Increase)
+                  <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
+                    <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
+                      Increase Stake
+                    </span>
+
+                    {/* Active Outcome Indicator (Read-only Selector) */}
+                    <div className="space-y-2">
+                      <span className="text-[10px] uppercase font-bold tracking-widest text-foreground/40 block">
+                        Your Staked Outcome
+                      </span>
+                      <div className="grid grid-cols-2 gap-2">
+                        {pool.outcomes.map((outcome, idx) => {
+                          const isSelected = userStake.outcome_index === idx;
+                          return (
+                            <button
+                              key={idx}
+                              type="button"
+                              disabled
+                              className={`px-4 py-3 rounded-xl border text-sm font-semibold tracking-wide text-center truncate select-none ${
+                                isSelected
+                                  ? 'bg-brand-gold text-charcoal-dark border-brand-gold shadow-md'
+                                  : 'bg-charcoal-dark/40 border-charcoal-light text-foreground/20'
+                              }`}
+                            >
+                              {outcome.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Stake Amount Input field */}
+                    <div className="space-y-2">
+                      <label className="text-[10px] uppercase font-bold tracking-widest text-foreground/40 block">
+                        Additional Stake (GEN)
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0.01"
+                          placeholder="0.00"
+                          value={stakeAmount}
+                          onChange={(e) => {
+                            setStakeAmount(e.target.value);
+                            setValidationError(null);
+                          }}
+                          className="w-full px-4 py-3 bg-charcoal-dark border border-charcoal-light focus:border-foreground/15 rounded-xl text-sm text-foreground focus:outline-none transition-colors pr-12 placeholder-foreground/20 font-semibold"
+                        />
+                        <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-foreground/40">
+                          GEN
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center text-[10px] text-foreground/45">
+                        <span>Current stake: {weiToGen(userStake.amount)} GEN</span>
+                        <span>Minimum: 0.01 GEN</span>
+                      </div>
+                    </div>
+
+                    {/* Validation / Action Triggers */}
+                    {validationError && (
+                      <p className="text-xs text-brand-magenta font-semibold">{validationError}</p>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={handleIncreaseClick}
+                      className="w-full py-3 bg-foreground hover:bg-warm-white text-background font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm"
+                    >
+                      Increase Stake
                     </button>
                   </div>
                 )}
@@ -720,11 +851,11 @@ export default function PoolDetailDrawer() {
       </div>
 
       {/* Confirmation Modal */}
-      {pool && selectedOutcomeIndex !== null && (
+      {pool && (hasJoined || selectedOutcomeIndex !== null) && (
         <ConfirmModal
           isOpen={isConfirmOpen}
           onClose={() => setIsConfirmOpen(false)}
-          onConfirm={handleConfirmJoin}
+          onConfirm={handleConfirmAction}
           title="Confirm Staking Action"
         >
           <div>
@@ -735,11 +866,19 @@ export default function PoolDetailDrawer() {
                 <span className="font-semibold text-foreground font-mono">#{pool.pool_id}</span>
               </div>
               <div className="flex justify-between text-xs">
-                <span className="text-foreground/45">Staking On</span>
-                <span className="font-semibold text-brand-gold">{pool.outcomes[selectedOutcomeIndex]?.label}</span>
+                <span className="text-foreground/45">
+                  {hasJoined ? 'Increasing Stake On' : 'Staking On'}
+                </span>
+                <span className="font-semibold text-brand-gold font-display">
+                  {hasJoined
+                    ? pool.outcomes[userStake.outcome_index]?.label
+                    : pool.outcomes[selectedOutcomeIndex!]?.label}
+                </span>
               </div>
               <div className="flex justify-between text-xs">
-                <span className="text-foreground/45">Stake Amount</span>
+                <span className="text-foreground/45">
+                  {hasJoined ? 'Added Stake Amount' : 'Stake Amount'}
+                </span>
                 <span className="font-bold text-foreground">{stakeAmount} GEN</span>
               </div>
             </div>
