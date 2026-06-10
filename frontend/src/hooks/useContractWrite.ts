@@ -61,26 +61,68 @@ export function useContractWrite(options?: UseContractWriteOptions) {
         addTransaction(hash, false);
 
         // Wait for transaction to be accepted on-chain
-        const receipt = await client.waitForTransactionReceipt({
-          hash,
-          status: TransactionStatus.ACCEPTED,
-        });
-
-        setStatus('accepted');
-        options?.onSuccess?.(receipt);
-
-        // Asynchronously poll for finality without blocking UI flow
-        client
-          .waitForTransactionReceipt({
+        try {
+          const receipt = await client.waitForTransactionReceipt({
             hash,
-            status: TransactionStatus.FINALIZED,
-          })
-          .then(() => {
-            setStatus('finalized');
-          })
-          .catch((err) => {
-            console.warn(`Finalization poll failed for ${hash}:`, err);
+            status: TransactionStatus.ACCEPTED,
+            retries: 120, // 10 minutes timeout
+            interval: 5000,
           });
+
+          setStatus('accepted');
+          options?.onSuccess?.(receipt);
+
+          // Asynchronously poll for finality without blocking UI flow
+          client
+            .waitForTransactionReceipt({
+              hash,
+              status: TransactionStatus.FINALIZED,
+              retries: 400, // 2000s / 5s = 400 retries
+              interval: 5000,
+            })
+            .then(() => {
+              setStatus('finalized');
+            })
+            .catch((err) => {
+              console.warn(`Finalization poll failed for ${hash}:`, err);
+            });
+        } catch (waitErr: any) {
+          const isTimeout = waitErr?.message?.toLowerCase().includes('time') ||
+                            waitErr?.message?.toLowerCase().includes('timeout') ||
+                            waitErr?.message?.toLowerCase().includes('retries');
+
+          if (isTimeout) {
+            console.warn(`Timeout waiting for transaction receipt for ${hash}. Treating as pending.`);
+
+            // Asynchronously poll for accepted status and then finality in background
+            const pollInBackground = async () => {
+              try {
+                const bgReceipt = await client.waitForTransactionReceipt({
+                  hash,
+                  status: TransactionStatus.ACCEPTED,
+                  retries: 300, // 25 minutes additional polling
+                  interval: 5000,
+                });
+                setStatus('accepted');
+                options?.onSuccess?.(bgReceipt);
+
+                await client.waitForTransactionReceipt({
+                  hash,
+                  status: TransactionStatus.FINALIZED,
+                  retries: 600, // 50 minutes additional polling
+                  interval: 5000,
+                });
+                setStatus('finalized');
+              } catch (bgErr) {
+                console.warn(`Background poll failed for ${hash}:`, bgErr);
+              }
+            };
+            pollInBackground();
+          } else {
+            // Re-throw fatal errors so they set the error status correctly
+            throw waitErr;
+          }
+        }
 
         return hash;
       } catch (err: any) {

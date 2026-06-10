@@ -195,7 +195,7 @@ export interface Stake {
   claimed: boolean;
 }
 
-function hexToBytes(hex: string): Uint8Array {
+export function hexToBytes(hex: string): Uint8Array {
   const clean = hex.startsWith('0x') ? hex.slice(2) : hex;
   if (clean.length !== 40) {
     throw new Error(`Invalid address hex length: ${hex}`);
@@ -220,6 +220,21 @@ export async function getStake(poolId: number, wallet: string): Promise<Stake> {
         args: [poolId, calldataAddr],
       });
       return res as unknown as Stake;
+    })
+  );
+}
+
+/**
+ * Fetches the current pool creation fee in wei units.
+ */
+export async function getCreationFee(): Promise<bigint> {
+  return rpcQueue.enqueue(() =>
+    withRateLimitRetry(async () => {
+      const res = await client.readContract({
+        address: CONTRACT_ADDRESS,
+        functionName: 'get_creation_fee',
+      });
+      return BigInt(res as string | number | bigint);
     })
   );
 }

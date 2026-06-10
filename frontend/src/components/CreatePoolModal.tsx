@@ -1,0 +1,1046 @@
+'use client';
+
+import React, { useState, useEffect, useCallback } from 'react';
+import { X, Plus, Trash2, Loader2, AlertCircle, CheckCircle2, ExternalLink, HelpCircle } from 'lucide-react';
+import { useWalletStore } from '../store/wallet';
+import { useContractWrite } from '../hooks/useContractWrite';
+import ConfirmModal from './ConfirmModal';
+import { getCreationFee, hexToBytes, CONTRACT_ADDRESS, weiToGen } from '../services/contract';
+import { CalldataAddress } from 'genlayer-js/types';
+import { usePoolsStore } from '../store/pools';
+
+/**
+ * Parses GEN decimal string amount and converts it to a BigInt representation in wei units.
+ * Prevents precision errors with floating-point calculations.
+ */
+function genToWei(genAmount: string): bigint {
+  const clean = genAmount.trim();
+  if (!clean) return 0n;
+
+  const parts = clean.split('.');
+  const integerPart = parts[0] || '0';
+  let fractionPart = parts[1] || '';
+
+  // Pad/truncate fractional part to exactly 18 decimals
+  fractionPart = fractionPart.slice(0, 18).padEnd(18, '0');
+
+  const integerWei = BigInt(integerPart) * 1000000000000000000n;
+  const fractionWei = BigInt(fractionPart);
+
+  return integerWei + fractionWei;
+}
+
+interface CreatePoolModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProps) {
+  const connectedAddress = useWalletStore((state) => state.connectedAddress);
+  const setWalletModalOpen = useWalletStore((state) => state.setModalOpen);
+  const loadPools = usePoolsStore((state) => state.loadPools);
+
+  // Live creation fee state
+  const [creationFee, setCreationFee] = useState<bigint | null>(null);
+  const [isFeeLoading, setIsFeeLoading] = useState<boolean>(true);
+
+  // Form states
+  const [terms, setTerms] = useState<string>('');
+  const [outcomes, setOutcomes] = useState<string[]>(['YES', 'NO']);
+  const [sources, setSources] = useState<string[]>(['', '']);
+  const [whitelist, setWhitelist] = useState<string[]>([]);
+  const [joinOffsetType, setJoinOffsetType] = useState<string>('24h');
+  const [joinOffsetCustom, setJoinOffsetCustom] = useState<string>('');
+  const [resolutionOffsetType, setResolutionOffsetType] = useState<string>('24h');
+  const [resolutionOffsetCustom, setResolutionOffsetCustom] = useState<string>('');
+  const [creatorOutcomeIndex, setCreatorOutcomeIndex] = useState<number>(0);
+  const [creatorStake, setCreatorStake] = useState<string>('');
+  const [category, setCategory] = useState<string>('');
+
+  // UI state
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [isConfirmOpen, setIsConfirmOpen] = useState<boolean>(false);
+
+  // Fetch live fee on load/open
+  useEffect(() => {
+    if (!isOpen) return;
+    let active = true;
+
+    async function loadFee() {
+      setIsFeeLoading(true);
+      try {
+        const fee = await getCreationFee();
+        if (active) {
+          setCreationFee(fee);
+        }
+      } catch (err) {
+        console.error('Failed to load creation fee:', err);
+      } finally {
+        if (active) {
+          setIsFeeLoading(false);
+        }
+      }
+    }
+
+    loadFee();
+    return () => {
+      active = false;
+    };
+  }, [isOpen]);
+
+  // Keep whitelist's first element updated with connected address
+  useEffect(() => {
+    if (connectedAddress) {
+      setWhitelist((prev) => {
+        const updated = [...prev];
+        updated[0] = connectedAddress;
+        return updated;
+      });
+    } else {
+      setWhitelist([]);
+    }
+  }, [connectedAddress]);
+
+  const { write, status: writeStatus, txHash, error: writeError, reset: resetWrite } = useContractWrite({
+    onSuccess: () => {
+      loadPools();
+    },
+  });
+
+  // Reset local form state
+  const handleReset = useCallback(() => {
+    setTerms('');
+    setOutcomes(['YES', 'NO']);
+    setSources(['', '']);
+    setWhitelist(connectedAddress ? [connectedAddress] : []);
+    setJoinOffsetType('24h');
+    setJoinOffsetCustom('');
+    setResolutionOffsetType('24h');
+    setResolutionOffsetCustom('');
+    setCreatorOutcomeIndex(0);
+    setCreatorStake('');
+    setCategory('');
+    setValidationError(null);
+    setIsConfirmOpen(false);
+    resetWrite();
+  }, [connectedAddress, resetWrite]);
+
+  // Handle modal close
+  const handleClose = () => {
+    handleReset();
+    onClose();
+  };
+
+  // Convert offset types to seconds
+  const getJoinOffsetSeconds = (): number => {
+    switch (joinOffsetType) {
+      case '1h':
+        return 3600;
+      case '6h':
+        return 21600;
+      case '24h':
+        return 86400;
+      case '48h':
+        return 172800;
+      case '7d':
+        return 604800;
+      case 'custom':
+        const parsed = parseFloat(joinOffsetCustom);
+        return isNaN(parsed) ? 0 : Math.floor(parsed * 3600);
+      default:
+        return 0;
+    }
+  };
+
+  const getResolutionGapSeconds = (): number => {
+    switch (resolutionOffsetType) {
+      case '1h':
+        return 3600;
+      case '6h':
+        return 21600;
+      case '24h':
+        return 86400;
+      case '7d':
+        return 604800;
+      case 'custom':
+        const parsed = parseFloat(resolutionOffsetCustom);
+        return isNaN(parsed) ? 0 : Math.floor(parsed * 3600);
+      default:
+        return 0;
+    }
+  };
+
+  // Field validation checks
+  const validateForm = (): boolean => {
+    if (!connectedAddress) {
+      setValidationError('Wallet must be connected');
+      return false;
+    }
+    if (isFeeLoading || creationFee === null) {
+      setValidationError('Creation fee not loaded');
+      return false;
+    }
+    if (!terms.trim()) {
+      setValidationError('Agreement terms are required');
+      return false;
+    }
+    if (terms.length > 2000) {
+      setValidationError('Terms cannot exceed 2000 characters');
+      return false;
+    }
+
+    // Outcomes validation
+    if (outcomes.length < 2 || outcomes.length > 10) {
+      setValidationError('Between 2 and 10 outcomes are required');
+      return false;
+    }
+    for (let i = 0; i < outcomes.length; i++) {
+      const lbl = outcomes[i]?.trim();
+      if (!lbl) {
+        setValidationError(`Outcome #${i + 1} label cannot be empty`);
+        return false;
+      }
+      if (lbl.length > 500) {
+        setValidationError(`Outcome #${i + 1} label cannot exceed 500 characters`);
+        return false;
+      }
+      for (let j = i + 1; j < outcomes.length; j++) {
+        if (outcomes[j]?.trim().toLowerCase() === lbl.toLowerCase()) {
+          setValidationError(`Duplicate outcome labels are not allowed: "${lbl}"`);
+          return false;
+        }
+      }
+    }
+
+    // Sources validation
+    if (sources.length < 2 || sources.length > 5) {
+      setValidationError('Between 2 and 5 resolution sources are required');
+      return false;
+    }
+    for (let i = 0; i < sources.length; i++) {
+      const src = sources[i]?.trim();
+      if (!src) {
+        setValidationError(`Verification source #${i + 1} cannot be empty`);
+        return false;
+      }
+      if (!src.startsWith('https://')) {
+        setValidationError(`Verification source #${i + 1} must be a valid https URL`);
+        return false;
+      }
+      for (let j = i + 1; j < sources.length; j++) {
+        if (sources[j]?.trim().toLowerCase() === src.toLowerCase()) {
+          setValidationError(`Duplicate verification source URLs are not allowed`);
+          return false;
+        }
+      }
+    }
+
+    // Whitelist validation
+    if (whitelist.length < 2 || whitelist.length > 100) {
+      setValidationError('Whitelist must contain between 2 and 100 wallet addresses');
+      return false;
+    }
+    const addressRegex = /^0x[a-fA-F0-9]{40}$/;
+    for (let i = 0; i < whitelist.length; i++) {
+      const addr = whitelist[i]?.trim();
+      if (!addr) {
+        setValidationError(`Whitelist address #${i + 1} cannot be empty`);
+        return false;
+      }
+      if (!addressRegex.test(addr)) {
+        setValidationError(`Whitelist address #${i + 1} is not a valid hex address`);
+        return false;
+      }
+      for (let j = i + 1; j < whitelist.length; j++) {
+        if (whitelist[j]?.trim().toLowerCase() === addr.toLowerCase()) {
+          setValidationError(`Duplicate address in whitelist`);
+          return false;
+        }
+      }
+    }
+
+    // Deadline validation
+    const joinSec = getJoinOffsetSeconds();
+    if (joinSec < 3600) {
+      setValidationError('Entries must close at least 1 hour in the future');
+      return false;
+    }
+    const gapSec = getResolutionGapSeconds();
+    if (gapSec < 3600) {
+      setValidationError('Resolution gap must be at least 1 hour after entries close');
+      return false;
+    }
+
+    // Stake validation
+    const stakeVal = parseFloat(creatorStake);
+    if (isNaN(stakeVal) || stakeVal < 0.01) {
+      setValidationError('Minimum creator stake amount is 0.01 GEN');
+      return false;
+    }
+
+    // Optional category length
+    if (category.trim().length > 500) {
+      setValidationError('Category label cannot exceed 500 characters');
+      return false;
+    }
+
+    setValidationError(null);
+    return true;
+  };
+
+  const handleCreateClick = () => {
+    if (validateForm()) {
+      setIsConfirmOpen(true);
+    }
+  };
+
+  const handleConfirmCreate = async () => {
+    if (!creationFee) return;
+    setIsConfirmOpen(false);
+
+    const joinOffset = getJoinOffsetSeconds();
+    const gapOffset = getResolutionGapSeconds();
+    const resolutionOffset = joinOffset + gapOffset; // sum offset total
+
+    // Wrap whitelist addresses into CalldataAddress
+    const whitelistAsCalldataAddresses = whitelist.map((addr) => new CalldataAddress(hexToBytes(addr)));
+
+    const creatorStakeWei = genToWei(creatorStake);
+    const totalValueWei = creationFee + creatorStakeWei;
+
+    try {
+      await write({
+        address: CONTRACT_ADDRESS,
+        functionName: 'create_pool',
+        args: [
+          terms.trim(),
+          outcomes.map((o) => o.trim()),
+          sources.map((s) => s.trim()),
+          whitelistAsCalldataAddresses,
+          BigInt(joinOffset),
+          BigInt(resolutionOffset),
+          creatorOutcomeIndex,
+          category.trim(),
+        ],
+        value: totalValueWei,
+      });
+    } catch (err) {
+      // Handled inside useContractWrite
+    }
+  };
+
+  if (!isOpen) return null;
+
+  const totalPayment = creationFee !== null
+    ? weiToGen((creationFee + genToWei(creatorStake)).toString())
+    : '0';
+
+  return (
+    <>
+      <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+        {/* Backdrop */}
+        <div
+          onClick={handleClose}
+          className="fixed inset-0 bg-black/75 backdrop-blur-sm transition-opacity duration-300"
+        />
+
+        {/* Modal Container */}
+        <div className="relative w-full max-w-2xl bg-charcoal-medium border border-charcoal-light rounded-2xl shadow-2xl flex flex-col max-h-[90vh] z-10 animate-fade-in overflow-hidden">
+          {/* Border Beam */}
+          <div
+            className="border-beam-container"
+            style={{
+              '--border-beam-width': '1.5px',
+              '--border-beam-dark-opacity': '0.3',
+              '--border-beam-light-opacity': '0.15',
+            } as React.CSSProperties}
+          />
+
+          {/* Header */}
+          <div className="flex items-center justify-between p-5 border-b border-charcoal-light bg-charcoal-dark/20">
+            <div>
+              <h3 className="text-sm font-semibold text-foreground tracking-wide uppercase font-display">
+                Create Prediction Pool
+              </h3>
+              <p className="text-[11px] text-foreground/45 mt-0.5 font-light">
+                Launch a private agreement pool resolved by decentralized LLM consensus on GenLayer Bradbury.
+              </p>
+            </div>
+            <button
+              onClick={handleClose}
+              disabled={writeStatus === 'signing' || writeStatus === 'pending'}
+              className="p-1.5 hover:bg-charcoal-light rounded-lg text-foreground/60 hover:text-foreground transition-all cursor-pointer disabled:opacity-50"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          {/* Scrollable Body */}
+          <div className="p-5 overflow-y-auto flex-1 space-y-6">
+            {writeStatus !== 'idle' ? (
+              // Transaction Tracking UX Panel
+              <div className="bg-charcoal-medium/30 border border-charcoal-light/35 rounded-2xl p-5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase">
+                    Transaction Tracking
+                  </span>
+                  {writeStatus === 'signing' && (
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-brand-gold bg-brand-gold/10 border border-brand-gold/25 px-2.5 py-0.5 rounded-full">
+                      Signing
+                    </span>
+                  )}
+                  {writeStatus === 'pending' && (
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-brand-gold bg-brand-gold/10 border border-brand-gold/25 px-2.5 py-0.5 rounded-full animate-pulse">
+                      Submitting
+                    </span>
+                  )}
+                  {writeStatus === 'accepted' && (
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-brand-gold bg-brand-gold/10 border border-brand-gold/25 px-2.5 py-0.5 rounded-full">
+                      Accepted
+                    </span>
+                  )}
+                  {writeStatus === 'finalized' && (
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-brand-gold bg-brand-gold/10 border border-brand-gold/25 px-2.5 py-0.5 rounded-full">
+                      Finalized
+                    </span>
+                  )}
+                  {writeStatus === 'error' && (
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-brand-magenta bg-brand-magenta/10 border border-brand-magenta/25 px-2.5 py-0.5 rounded-full">
+                      Failed
+                    </span>
+                  )}
+                </div>
+
+                <div className="space-y-3">
+                  {writeStatus === 'signing' && (
+                    <div className="flex items-center gap-3">
+                      <Loader2 className="w-5 h-5 text-brand-gold animate-spin shrink-0" />
+                      <span className="text-sm font-medium text-foreground/80">
+                        Awaiting signature in your wallet...
+                      </span>
+                    </div>
+                  )}
+
+                  {writeStatus === 'pending' && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-3">
+                        <Loader2 className="w-5 h-5 text-brand-gold animate-spin shrink-0" />
+                        <span className="text-sm font-medium text-foreground/80">
+                          Transaction submitted. Awaiting block acceptance.
+                        </span>
+                      </div>
+                      {txHash && (
+                        <div className="text-[11px] font-mono text-foreground/50 truncate flex items-center justify-between bg-charcoal-dark/50 border border-charcoal-light/10 px-2 py-1.5 rounded-lg select-all">
+                          <span className="truncate">{txHash}</span>
+                          <a
+                            href={`https://explorer-bradbury.genlayer.com/tx/${txHash}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-foreground/40 hover:text-foreground transition-all ml-2 shrink-0"
+                            title="View transaction on explorer"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" />
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {writeStatus === 'accepted' && (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-3">
+                        <CheckCircle2 className="w-5 h-5 text-brand-gold shrink-0" />
+                        <span className="text-sm font-semibold text-foreground/95">
+                          Transaction accepted on-chain!
+                        </span>
+                      </div>
+                      <p className="text-xs text-foreground/50 leading-relaxed font-light">
+                        Your pool creation transaction has been accepted by GenLayer validator consensus. Bradbury finality takes 25 to 40 minutes. You can close this form now, and the pool will display once finalized.
+                      </p>
+                      {txHash && (
+                        <div className="text-[11px] font-mono text-foreground/50 truncate flex items-center justify-between bg-charcoal-dark/50 border border-charcoal-light/10 px-2 py-1.5 rounded-lg select-all">
+                          <span className="truncate">{txHash}</span>
+                          <a
+                            href={`https://explorer-bradbury.genlayer.com/tx/${txHash}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-foreground/40 hover:text-foreground transition-all ml-2 shrink-0"
+                            title="View transaction on explorer"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" />
+                          </a>
+                        </div>
+                      )}
+                      <button
+                        onClick={handleClose}
+                        className="w-full py-2 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light text-xs font-semibold text-foreground rounded-xl transition-all cursor-pointer"
+                      >
+                        Close Window
+                      </button>
+                    </div>
+                  )}
+
+                  {writeStatus === 'finalized' && (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-3">
+                        <CheckCircle2 className="w-5 h-5 text-brand-gold shrink-0" />
+                        <span className="text-sm font-semibold text-foreground/95">
+                          Transaction reached finality!
+                        </span>
+                      </div>
+                      {txHash && (
+                        <div className="text-[11px] font-mono text-foreground/50 truncate flex items-center justify-between bg-charcoal-dark/50 border border-charcoal-light/10 px-2 py-1.5 rounded-lg select-all">
+                          <span className="truncate">{txHash}</span>
+                          <a
+                            href={`https://explorer-bradbury.genlayer.com/tx/${txHash}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-foreground/40 hover:text-foreground transition-all ml-2 shrink-0"
+                            title="View transaction on explorer"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" />
+                          </a>
+                        </div>
+                      )}
+                      <button
+                        onClick={handleClose}
+                        className="w-full py-2 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light text-xs font-semibold text-foreground rounded-xl transition-all cursor-pointer"
+                      >
+                        Close Window
+                      </button>
+                    </div>
+                  )}
+
+                  {writeStatus === 'error' && (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-3">
+                        <AlertCircle className="w-5 h-5 text-brand-magenta shrink-0" />
+                        <span className="text-sm font-semibold text-foreground/90">
+                          Transaction failed
+                        </span>
+                      </div>
+                      <p className="text-xs text-brand-magenta/80 leading-relaxed max-h-24 overflow-y-auto font-mono bg-brand-magenta/5 border border-brand-magenta/10 p-2.5 rounded-lg select-text">
+                        {writeError?.message || 'Transaction was rejected or reverted.'}
+                      </p>
+                      <button
+                        onClick={resetWrite}
+                        className="w-full py-2 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light text-xs font-semibold text-foreground rounded-xl transition-all cursor-pointer"
+                      >
+                        Try Again
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              // Standard Form Input Fields
+              <div className="space-y-5">
+                {/* Connected Wallet Alert Check */}
+                {!connectedAddress && (
+                  <div className="p-4 bg-charcoal-medium/20 border border-charcoal-light/20 rounded-xl flex flex-col items-center text-center space-y-3">
+                    <p className="text-xs text-foreground/60 leading-relaxed font-light">
+                      Connect your wallet to configure and launch a prediction pool.
+                    </p>
+                    <button
+                      onClick={() => setWalletModalOpen(true)}
+                      className="px-4 py-2 bg-brand-gold hover:bg-brand-gold/90 text-charcoal-dark text-xs font-semibold rounded-xl transition-all cursor-pointer"
+                    >
+                      Connect Wallet
+                    </button>
+                  </div>
+                )}
+
+                {connectedAddress && (
+                  <>
+                    {/* Agreement Terms text area */}
+                    <div className="space-y-2">
+                      <label className="text-[10px] uppercase font-bold tracking-widest text-foreground/45 block">
+                        Agreement Terms
+                      </label>
+                      <div className="relative">
+                        <textarea
+                          placeholder="Describe the event, question, and the exact objective outcome conditions that can be verified by the LLM oracle..."
+                          value={terms}
+                          onChange={(e) => {
+                            setTerms(e.target.value);
+                            setValidationError(null);
+                          }}
+                          className="w-full h-24 px-3.5 py-3 bg-charcoal-dark border border-charcoal-light focus:border-foreground/15 rounded-xl text-xs text-foreground focus:outline-none transition-colors placeholder-foreground/20 leading-relaxed resize-none"
+                          maxLength={2000}
+                        />
+                        <span className={`absolute right-3.5 bottom-2.5 text-[9px] font-mono ${terms.length > 1900 ? 'text-brand-magenta' : 'text-foreground/30'}`}>
+                          {terms.length}/2000
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Outcomes dynamic list */}
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center">
+                        <label className="text-[10px] uppercase font-bold tracking-widest text-foreground/45">
+                          Outcomes Labels
+                        </label>
+                        <span className="text-[9px] text-foreground/40 font-light">
+                          2 to 10 options
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2.5">
+                        {outcomes.map((label, idx) => (
+                          <div key={idx} className="relative flex items-center">
+                            <input
+                              type="text"
+                              placeholder={`Outcome #${idx + 1}`}
+                              value={label}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setOutcomes((prev) => {
+                                  const updated = [...prev];
+                                  updated[idx] = val;
+                                  return updated;
+                                });
+                                setValidationError(null);
+                              }}
+                              className="w-full pl-3.5 pr-9 py-2.5 bg-charcoal-dark border border-charcoal-light focus:border-foreground/15 rounded-xl text-xs text-foreground focus:outline-none transition-colors placeholder-foreground/20 font-semibold"
+                            />
+                            {outcomes.length > 2 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setOutcomes((prev) => prev.filter((_, i) => i !== idx));
+                                  // Adjust creator selection index if needed
+                                  if (creatorOutcomeIndex >= outcomes.length - 1) {
+                                    setCreatorOutcomeIndex(0);
+                                  }
+                                  setValidationError(null);
+                                }}
+                                className="absolute right-2.5 p-1 hover:bg-charcoal-light/50 text-foreground/40 hover:text-brand-magenta transition-all rounded-md cursor-pointer"
+                                title="Remove outcome"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                      {outcomes.length < 10 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setOutcomes((prev) => [...prev, '']);
+                            setValidationError(null);
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-charcoal-dark hover:bg-charcoal-light border border-charcoal-light/50 rounded-lg text-[10px] font-semibold text-foreground/70 hover:text-foreground transition-all cursor-pointer mt-1"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          Add Option
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Resolution Web Sources list */}
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center">
+                        <label className="text-[10px] uppercase font-bold tracking-widest text-foreground/45">
+                          Verification Web Sources
+                        </label>
+                        <span className="text-[9px] text-foreground/40 font-light flex items-center gap-1">
+                          <HelpCircle className="w-3 h-3" />
+                          2 to 5 public HTTPS links
+                        </span>
+                      </div>
+                      <div className="space-y-2">
+                        {sources.map((url, idx) => (
+                          <div key={idx} className="relative flex items-center">
+                            <input
+                              type="text"
+                              placeholder="https://example.com/source"
+                              value={url}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setSources((prev) => {
+                                  const updated = [...prev];
+                                  updated[idx] = val;
+                                  return updated;
+                                });
+                                setValidationError(null);
+                              }}
+                              className="w-full pl-3.5 pr-9 py-2.5 bg-charcoal-dark border border-charcoal-light focus:border-foreground/15 rounded-xl text-xs text-foreground focus:outline-none transition-colors placeholder-foreground/20"
+                            />
+                            {sources.length > 2 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSources((prev) => prev.filter((_, i) => i !== idx));
+                                  setValidationError(null);
+                                }}
+                                className="absolute right-2.5 p-1 hover:bg-charcoal-light/50 text-foreground/40 hover:text-brand-magenta transition-all rounded-md cursor-pointer"
+                                title="Remove source"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                      {sources.length < 5 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSources((prev) => [...prev, '']);
+                            setValidationError(null);
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-charcoal-dark hover:bg-charcoal-light border border-charcoal-light/50 rounded-lg text-[10px] font-semibold text-foreground/70 hover:text-foreground transition-all cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          Add URL
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Whitelist inputs list */}
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center">
+                        <label className="text-[10px] uppercase font-bold tracking-widest text-foreground/45">
+                          Whitelist Participants
+                        </label>
+                        <span className="text-[9px] text-foreground/40 font-light">
+                          Min 2 addresses (includes you)
+                        </span>
+                      </div>
+                      <div className="space-y-2">
+                        {whitelist.map((addr, idx) => {
+                          const isCreator = idx === 0;
+                          return (
+                            <div key={idx} className="relative flex items-center">
+                              <input
+                                type="text"
+                                disabled={isCreator}
+                                placeholder="0x..."
+                                value={addr}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setWhitelist((prev) => {
+                                    const updated = [...prev];
+                                    updated[idx] = val;
+                                    return updated;
+                                  });
+                                  setValidationError(null);
+                                }}
+                                className={`w-full pl-3.5 pr-14 py-2.5 border focus:outline-none transition-colors rounded-xl text-xs font-mono ${
+                                  isCreator
+                                    ? 'bg-charcoal-dark/20 border-charcoal-light/30 text-foreground/45'
+                                    : 'bg-charcoal-dark border-charcoal-light focus:border-foreground/15 text-foreground placeholder-foreground/20'
+                                }`}
+                              />
+                              {isCreator ? (
+                                <span className="absolute right-3.5 text-[9px] font-semibold text-brand-gold uppercase tracking-wider select-none">
+                                  Creator
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setWhitelist((prev) => prev.filter((_, i) => i !== idx));
+                                    setValidationError(null);
+                                  }}
+                                  className="absolute right-2.5 p-1 hover:bg-charcoal-light/50 text-foreground/40 hover:text-brand-magenta transition-all rounded-md cursor-pointer"
+                                  title="Remove address"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {whitelist.length < 100 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setWhitelist((prev) => [...prev, '']);
+                            setValidationError(null);
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-charcoal-dark hover:bg-charcoal-light border border-charcoal-light/50 rounded-lg text-[10px] font-semibold text-foreground/70 hover:text-foreground transition-all cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          Add Whitelist Address
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Timeline Deadlines selection grid */}
+                    <div className="grid grid-cols-2 gap-4">
+                      {/* Join offset selection */}
+                      <div className="space-y-2">
+                        <label className="text-[10px] uppercase font-bold tracking-widest text-foreground/45 block">
+                          Entries Close In
+                        </label>
+                        <select
+                          value={joinOffsetType}
+                          onChange={(e) => {
+                            setJoinOffsetType(e.target.value);
+                            setValidationError(null);
+                          }}
+                          className="w-full px-3.5 py-2.5 bg-charcoal-dark border border-charcoal-light rounded-xl text-xs text-foreground/80 focus:outline-none transition-colors cursor-pointer"
+                        >
+                          <option value="1h">1 Hour</option>
+                          <option value="6h">6 Hours</option>
+                          <option value="24h">24 Hours (1 Day)</option>
+                          <option value="48h">48 Hours (2 Days)</option>
+                          <option value="7d">7 Days (1 Week)</option>
+                          <option value="custom">Custom Hours</option>
+                        </select>
+                        {joinOffsetType === 'custom' && (
+                          <input
+                            type="number"
+                            step="1"
+                            min="1"
+                            placeholder="Hours (min 1)"
+                            value={joinOffsetCustom}
+                            onChange={(e) => {
+                              setJoinOffsetCustom(e.target.value);
+                              setValidationError(null);
+                            }}
+                            className="w-full px-3.5 py-2 bg-charcoal-dark border border-charcoal-light focus:border-foreground/15 rounded-xl text-xs text-foreground focus:outline-none mt-1.5"
+                          />
+                        )}
+                      </div>
+
+                      {/* Resolution gap offset selection */}
+                      <div className="space-y-2">
+                        <label className="text-[10px] uppercase font-bold tracking-widest text-foreground/45 block">
+                          Resolution Target
+                        </label>
+                        <select
+                          value={resolutionOffsetType}
+                          onChange={(e) => {
+                            setResolutionOffsetType(e.target.value);
+                            setValidationError(null);
+                          }}
+                          className="w-full px-3.5 py-2.5 bg-charcoal-dark border border-charcoal-light rounded-xl text-xs text-foreground/80 focus:outline-none transition-colors cursor-pointer"
+                        >
+                          <option value="1h">1 Hour after close</option>
+                          <option value="6h">6 Hours after close</option>
+                          <option value="24h">24 Hours after close</option>
+                          <option value="7d">7 Days after close</option>
+                          <option value="custom">Custom Hours</option>
+                        </select>
+                        {resolutionOffsetType === 'custom' && (
+                          <input
+                            type="number"
+                            step="1"
+                            min="1"
+                            placeholder="Hours (min 1)"
+                            value={resolutionOffsetCustom}
+                            onChange={(e) => {
+                              setResolutionOffsetCustom(e.target.value);
+                              setValidationError(null);
+                            }}
+                            className="w-full px-3.5 py-2 bg-charcoal-dark border border-charcoal-light focus:border-foreground/15 rounded-xl text-xs text-foreground focus:outline-none mt-1.5"
+                          />
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Initial Stake selection and breakdown */}
+                    <div className="grid grid-cols-2 gap-4">
+                      {/* Creator outcome selection */}
+                      <div className="space-y-2">
+                        <label className="text-[10px] uppercase font-bold tracking-widest text-foreground/45 block">
+                          Staking Option
+                        </label>
+                        <select
+                          value={creatorOutcomeIndex}
+                          onChange={(e) => {
+                            setCreatorOutcomeIndex(parseInt(e.target.value));
+                          }}
+                          className="w-full px-3.5 py-2.5 bg-charcoal-dark border border-charcoal-light rounded-xl text-xs text-foreground/80 focus:outline-none transition-colors cursor-pointer"
+                        >
+                          {outcomes.map((label, idx) => (
+                            <option key={idx} value={idx}>
+                              {label.trim() || `Outcome #${idx + 1}`}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Stake amount */}
+                      <div className="space-y-2">
+                        <label className="text-[10px] uppercase font-bold tracking-widest text-foreground/45 block">
+                          Your Stake Amount
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0.01"
+                            placeholder="0.00"
+                            value={creatorStake}
+                            onChange={(e) => {
+                              setCreatorStake(e.target.value);
+                              setValidationError(null);
+                            }}
+                            className="w-full pl-3.5 pr-12 py-2.5 bg-charcoal-dark border border-charcoal-light focus:border-foreground/15 rounded-xl text-xs text-foreground focus:outline-none transition-colors placeholder-foreground/20 font-semibold"
+                          />
+                          <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-foreground/40">
+                            GEN
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Cost Breakdown Summary Banner */}
+                    <div className="bg-charcoal-dark/40 border border-charcoal-light rounded-2xl p-4.5 space-y-2">
+                      <span className="text-[10px] uppercase font-bold tracking-widest text-foreground/45 block">
+                        Cost Breakdown Summary
+                      </span>
+                      <div className="space-y-2 text-xs font-light">
+                        <div className="flex justify-between">
+                          <span className="text-foreground/50">Creation Fee</span>
+                          <span className="font-semibold text-foreground">
+                            {isFeeLoading
+                              ? 'Loading...'
+                              : creationFee !== null
+                              ? `${weiToGen(creationFee.toString())} GEN`
+                              : '0 GEN'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-foreground/50">Your Initial Stake</span>
+                          <span className="font-semibold text-foreground">
+                            {creatorStake ? `${parseFloat(creatorStake).toFixed(4)} GEN` : '0.00 GEN'}
+                          </span>
+                        </div>
+                        <div className="border-t border-charcoal-light/50 my-1.5 pt-1.5 flex justify-between font-semibold">
+                          <span>Total Payment Required</span>
+                          <span className="text-brand-gold font-bold">{totalPayment} GEN</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Category Selection input */}
+                    <div className="space-y-2">
+                      <label className="text-[10px] uppercase font-bold tracking-widest text-foreground/45 block">
+                        Category (Optional)
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Sports, Politics, Tech, Pop Culture..."
+                        value={category}
+                        onChange={(e) => {
+                          setCategory(e.target.value);
+                          setValidationError(null);
+                        }}
+                        className="w-full px-3.5 py-2.5 bg-charcoal-dark border border-charcoal-light focus:border-foreground/15 rounded-xl text-xs text-foreground focus:outline-none transition-colors placeholder-foreground/20"
+                        maxLength={500}
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Error notification display */}
+          {validationError && (
+            <div className="px-5 py-3.5 bg-brand-magenta/5 border-t border-b border-brand-magenta/15 flex items-start gap-2.5 text-xs text-brand-magenta font-semibold">
+              <AlertCircle className="w-4.5 h-4.5 shrink-0 mt-0.5" />
+              <span>{validationError}</span>
+            </div>
+          )}
+
+          {/* Footer controls */}
+          <div className="flex items-center justify-end gap-3 p-4 border-t border-charcoal-light bg-charcoal-dark/10">
+            <button
+              onClick={handleClose}
+              disabled={writeStatus === 'signing' || writeStatus === 'pending'}
+              className="px-4 py-2 border border-charcoal-light hover:bg-charcoal-light rounded-xl text-xs font-semibold text-foreground transition-all cursor-pointer disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            {writeStatus === 'idle' && (
+              <button
+                onClick={handleCreateClick}
+                disabled={!connectedAddress || isFeeLoading || creationFee === null}
+                className="px-4 py-2 bg-brand-gold hover:bg-brand-gold/90 disabled:bg-charcoal-light disabled:text-foreground/20 disabled:border-charcoal-light text-charcoal-dark border border-brand-gold rounded-xl text-xs font-semibold transition-all cursor-pointer disabled:opacity-50"
+              >
+                Create Pool
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Confirmation Modal */}
+      {isOpen && isConfirmOpen && (
+        <ConfirmModal
+          isOpen={isConfirmOpen}
+          onClose={() => setIsConfirmOpen(false)}
+          onConfirm={handleConfirmCreate}
+          title="Confirm Agreement Pool Creation"
+        >
+          <div className="space-y-4">
+            <p className="text-xs text-foreground/70 font-light leading-relaxed">
+              Please carefully review the prediction pool parameters before signing the deployment transaction in your wallet:
+            </p>
+            <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-3">
+              <div className="space-y-1">
+                <span className="text-[10px] uppercase font-bold tracking-widest text-foreground/45 block">
+                  Terms
+                </span>
+                <p className="text-xs text-foreground leading-normal font-mono font-medium max-h-24 overflow-y-auto whitespace-pre-wrap select-all">
+                  {terms}
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div>
+                  <span className="text-foreground/45 block mb-0.5">Your Selected Outcome</span>
+                  <span className="font-semibold text-brand-gold">
+                    {outcomes[creatorOutcomeIndex]}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-foreground/45 block mb-0.5">Total Payment</span>
+                  <span className="font-bold text-foreground">
+                    {totalPayment} GEN
+                  </span>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3 text-xs border-t border-charcoal-light/30 pt-2.5">
+                <div>
+                  <span className="text-foreground/45 block mb-0.5">Entries Close Offset</span>
+                  <span className="font-semibold text-foreground">
+                    {(getJoinOffsetSeconds() / 3600).toFixed(1)} hours
+                  </span>
+                </div>
+                <div>
+                  <span className="text-foreground/45 block mb-0.5">Resolution Target Offset</span>
+                  <span className="font-semibold text-foreground">
+                    {((getJoinOffsetSeconds() + getResolutionGapSeconds()) / 3600).toFixed(1)} hours
+                  </span>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3 text-xs border-t border-charcoal-light/30 pt-2.5">
+                <div>
+                  <span className="text-foreground/45 block mb-0.5">Verification Sources</span>
+                  <span className="font-semibold text-foreground">
+                    {sources.length} sources
+                  </span>
+                </div>
+                <div>
+                  <span className="text-foreground/45 block mb-0.5">Whitelist size</span>
+                  <span className="font-semibold text-foreground">
+                    {whitelist.length} addresses
+                  </span>
+                </div>
+              </div>
+            </div>
+            <p className="text-[11px] text-foreground/45 italic leading-snug">
+              Creating a pool is final. Pool parameters cannot be modified once submitted. Bradbury finality requires 25 to 40 minutes.
+            </p>
+          </div>
+        </ConfirmModal>
+      )}
+    </>
+  );
+}

@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight, RefreshCw, AlertTriangle, HelpCircle } from 
 import { usePoolsStore, selectFilteredPools, selectCategories } from '../store/pools';
 import PoolCard from './PoolCard';
 import PoolDetailDrawer from './PoolDetailDrawer';
+import CreatePoolModal from './CreatePoolModal';
 
 export default function PoolExplorer() {
   const pools = usePoolsStore(selectFilteredPools);
@@ -19,6 +20,7 @@ export default function PoolExplorer() {
 
   const [activeIndex, setActiveIndex] = useState(0);
   const [isMobile, setIsMobile] = useState(false);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
 
   // Load prediction pools from Bradbury contract on component mount
   useEffect(() => {
@@ -199,24 +201,33 @@ export default function PoolExplorer() {
 
   return (
     <div className="w-full flex flex-col items-center select-none animate-fade-in-up">
-      {/* Category tabs navigation */}
-      <div className="flex flex-wrap items-center justify-center gap-2 mb-12 w-full max-w-2xl px-4">
-        {categories.map((cat) => {
-          const isActive = selectedCategory === cat;
-          return (
-            <button
-              key={cat}
-              onClick={() => setSelectedCategory(cat)}
-              className={`px-4 py-2 text-xs font-semibold tracking-wider uppercase rounded-xl border transition-all duration-200 cursor-pointer ${
-                isActive
-                  ? 'bg-brand-gold text-charcoal-dark border-brand-gold shadow-md'
-                  : 'bg-charcoal-medium/40 hover:bg-charcoal-medium border-charcoal-light/30 text-foreground/60 hover:text-foreground'
-              }`}
-            >
-              {cat}
-            </button>
-          );
-        })}
+      {/* Category tabs navigation and Create Pool Trigger */}
+      <div className="flex flex-col md:flex-row items-center justify-between w-full max-w-4xl gap-4 mb-12 px-4">
+        <div className="flex flex-wrap items-center justify-center md:justify-start gap-2">
+          {categories.map((cat) => {
+            const isActive = selectedCategory === cat;
+            return (
+              <button
+                key={cat}
+                onClick={() => setSelectedCategory(cat)}
+                className={`px-4 py-2 text-xs font-semibold tracking-wider uppercase rounded-xl border transition-all duration-200 cursor-pointer ${
+                  isActive
+                    ? 'bg-brand-gold text-charcoal-dark border-brand-gold shadow-md'
+                    : 'bg-charcoal-medium/40 hover:bg-charcoal-medium border-charcoal-light/30 text-foreground/60 hover:text-foreground'
+                }`}
+              >
+                {cat}
+              </button>
+            );
+          })}
+        </div>
+
+        <button
+          onClick={() => setIsCreateModalOpen(true)}
+          className="px-5 py-2 flex items-center gap-1.5 bg-brand-gold hover:bg-brand-gold/90 text-charcoal-dark text-xs font-bold rounded-xl transition-all cursor-pointer font-display tracking-wider uppercase shadow-md shrink-0"
+        >
+          Create Pool
+        </button>
       </div>
 
       {/* 3D Carousel Stage */}
@@ -279,6 +290,12 @@ export default function PoolExplorer() {
 
       {/* Sliding side drawer panel */}
       <PoolDetailDrawer />
+
+      {/* Create Pool modal form */}
+      <CreatePoolModal
+        isOpen={isCreateModalOpen}
+        onClose={() => setIsCreateModalOpen(false)}
+      />
     </div>
   );
 }
