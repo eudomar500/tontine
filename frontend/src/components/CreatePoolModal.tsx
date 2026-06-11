@@ -440,8 +440,7 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
             </div>
             <button
               onClick={handleClose}
-              disabled={writeStatus === 'signing' || writeStatus === 'pending'}
-              className="p-1.5 hover:bg-charcoal-light rounded-lg text-foreground/60 hover:text-foreground transition-all cursor-pointer disabled:opacity-50"
+              className="p-1.5 hover:bg-charcoal-light rounded-lg text-foreground/60 hover:text-foreground transition-all cursor-pointer"
             >
               <X className="w-5 h-5" />
             </button>
@@ -1157,18 +1156,26 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
 
           {/* Footer controls */}
           <div className="flex items-center justify-end gap-3 p-4 border-t border-charcoal-light bg-charcoal-dark/10">
-            <button
-              onClick={handleClose}
-              disabled={writeStatus === 'signing' || writeStatus === 'pending'}
-              className="px-4 py-2 border border-charcoal-light hover:bg-charcoal-light rounded-xl text-xs font-semibold text-foreground transition-all cursor-pointer disabled:opacity-50"
-            >
-              Cancel
-            </button>
+            {writeStatus === 'idle' ? (
+              <button
+                onClick={handleClose}
+                className="px-4 py-2 border border-charcoal-light hover:bg-charcoal-light rounded-xl text-xs font-semibold text-foreground transition-all cursor-pointer"
+              >
+                Cancel
+              </button>
+            ) : (
+              <button
+                onClick={handleClose}
+                className="px-4 py-2 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light rounded-xl text-xs font-semibold text-foreground transition-all cursor-pointer"
+              >
+                Close
+              </button>
+            )}
             {writeStatus === 'idle' && (
               <button
                 onClick={handleCreateClick}
                 disabled={!connectedAddress || isFeeLoading || creationFee === null}
-                className="px-4 py-2 bg-brand-gold hover:bg-brand-gold/90 disabled:bg-charcoal-light disabled:text-foreground/20 disabled:border-charcoal-light text-charcoal-dark border border-brand-gold rounded-xl text-xs font-semibold transition-all cursor-pointer disabled:opacity-50"
+                className="px-4 py-2 bg-brand-gold hover:bg-brand-gold/90 disabled:bg-charcoal-light disabled:text-foreground/20 disabled:border-charcoal-light text-charcoal-dark border border-brand-gold rounded-xl text-xs font-semibold transition-all cursor-pointer"
               >
                 Create Pool
               </button>

@@ -1,11 +1,12 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { ChevronLeft, ChevronRight, RefreshCw, AlertTriangle, HelpCircle } from 'lucide-react';
+import { ChevronLeft, ChevronRight, RefreshCw, AlertTriangle, HelpCircle, Loader2, ExternalLink } from 'lucide-react';
 import { usePoolsStore, selectFilteredPools, selectCategories } from '../store/pools';
 import PoolCard from './PoolCard';
 import PoolDetailDrawer from './PoolDetailDrawer';
 import CreatePoolModal from './CreatePoolModal';
+import { useTxStore } from '../store/transactions';
 
 export default function PoolExplorer() {
   const pools = usePoolsStore(selectFilteredPools);
@@ -21,6 +22,25 @@ export default function PoolExplorer() {
   const [activeIndex, setActiveIndex] = useState(0);
   const [isMobile, setIsMobile] = useState(false);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+
+  const transactions = useTxStore((state) => state.transactions);
+  const removeTransaction = useTxStore((state) => state.removeTransaction);
+
+  const pendingCreateTx = transactions.find(
+    (tx) => tx.action === 'create_pool' && tx.status !== 'finalized'
+  );
+
+  // Automatically clear create_pool transactions from the tracker when the pool list updates
+  useEffect(() => {
+    if (unfilteredPools.length > 0) {
+      const createTxs = transactions.filter(
+        (tx) => tx.action === 'create_pool' && (tx.status === 'accepted' || tx.status === 'finalized')
+      );
+      for (const tx of createTxs) {
+        removeTransaction(tx.hash);
+      }
+    }
+  }, [unfilteredPools.length, transactions, removeTransaction]);
 
   // Load prediction pools from Bradbury contract on component mount
   useEffect(() => {
@@ -196,12 +216,29 @@ export default function PoolExplorer() {
           })}
         </div>
 
-        <button
-          onClick={() => setIsCreateModalOpen(true)}
-          className="px-5 py-2 flex items-center gap-1.5 bg-brand-gold hover:bg-brand-gold/90 text-charcoal-dark text-xs font-bold rounded-xl transition-all cursor-pointer font-display tracking-wider uppercase shadow-md shrink-0"
-        >
-          Create Pool
-        </button>
+        <div className="flex items-center gap-3.5 shrink-0">
+          {pendingCreateTx && (
+            <div className="flex items-center gap-2 px-3.5 py-2 bg-brand-gold/10 border border-brand-gold/25 rounded-xl animate-pulse text-[11px] font-semibold text-brand-gold">
+              <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+              <span>Creating pool...</span>
+              <a
+                href={`https://explorer-bradbury.genlayer.com/tx/${pendingCreateTx.hash}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-brand-gold/70 hover:text-brand-gold transition-colors flex items-center shrink-0"
+                title="View on explorer"
+              >
+                <ExternalLink className="w-3.5 h-3.5 ml-0.5" />
+              </a>
+            </div>
+          )}
+          <button
+            onClick={() => setIsCreateModalOpen(true)}
+            className="px-5 py-2 flex items-center gap-1.5 bg-brand-gold hover:bg-brand-gold/90 text-charcoal-dark text-xs font-bold rounded-xl transition-all cursor-pointer font-display tracking-wider uppercase shadow-md shrink-0"
+          >
+            Create Pool
+          </button>
+        </div>
       </div>
 
       {unfilteredPools.length === 0 ? (
