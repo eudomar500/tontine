@@ -12,7 +12,7 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 
 KEYSTORE_PATH = Path(__file__).parent.parent / ".admin-keystore.json"
 PASSWORD = os.environ["ADMIN_KEYSTORE_PASSWORD"]
-CONTRACT = "0x4cA9bd0d2130773dfA5C9d571d987E4929A23498"
+CONTRACT = "0xB59455b38F9D3f39ccccF7d48e949aaa1b7eCCd2"
 
 ADMIN = "0xF27E3A6d7Bf4BfC0A837020FD74E73055aF17D53"
 WALLET2 = "0xFeE34b22628Fa0D5B8fA64Ba7c49835EcB18e752"

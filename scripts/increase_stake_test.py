@@ -9,7 +9,7 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 
 # Second wallet (already staked on NO) increases its stake.
 PRIVATE_KEY = os.environ["WALLET2_PRIVATE_KEY"]
-CONTRACT = "0x4cA9bd0d2130773dfA5C9d571d987E4929A23498"
+CONTRACT = "0xB59455b38F9D3f39ccccF7d48e949aaa1b7eCCd2"
 
 account = Account.from_key(PRIVATE_KEY)
 client = create_client(chain=testnet_bradbury, account=account)
