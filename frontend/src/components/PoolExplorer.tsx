@@ -173,32 +173,6 @@ export default function PoolExplorer() {
     );
   }
 
-  // Empty state handling
-  if (unfilteredPools.length === 0) {
-    return (
-      <div className="w-full max-w-md mx-auto p-10 bg-charcoal-medium/30 border border-charcoal-light/30 rounded-2xl text-center shadow-lg animate-fade-in">
-        <div className="flex justify-center mb-5">
-          <div className="p-3 bg-charcoal-light/30 rounded-full text-foreground/50 border border-charcoal-light/50">
-            <HelpCircle className="w-6 h-6" />
-          </div>
-        </div>
-        <h4 className="text-lg font-bold text-foreground mb-2">
-          No Active Pools Found
-        </h4>
-        <p className="text-sm text-foreground/50 leading-relaxed font-light mb-6">
-          There are currently no prediction pools registered on the live Bradbury contract.
-        </p>
-        <button
-          onClick={loadPools}
-          className="flex items-center justify-center gap-2 mx-auto px-5 py-2.5 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light rounded-xl text-sm font-semibold text-foreground transition-all cursor-pointer"
-        >
-          <RefreshCw className="w-4 h-4" />
-          Refresh List
-        </button>
-      </div>
-    );
-  }
-
   return (
     <div className="w-full flex flex-col items-center select-none animate-fade-in-up">
       {/* Category tabs navigation and Create Pool Trigger */}
@@ -230,62 +204,117 @@ export default function PoolExplorer() {
         </button>
       </div>
 
-      {/* 3D Carousel Stage */}
-      <div 
-        className="relative w-full max-w-sm sm:max-w-md h-[480px] flex items-center justify-center"
-        style={{ perspective: '1200px', transformStyle: 'preserve-3d' }}
-      >
-        {pools.map((pool, idx) => {
-          let offset = idx - activeIndex;
-          if (count > 2) {
-            let diff = idx - activeIndex;
-            if (diff < -count / 2) diff += count;
-            if (diff > count / 2) diff -= count;
-            offset = diff;
-          }
-          const isActive = offset === 0 || count === 1;
-
-          return (
-            <div 
-              key={pool.pool_id} 
-              style={getCardStyle(idx)}
-              onClick={() => {
-                if (isActive) {
-                  setSelectedPoolId(pool.pool_id);
-                } else {
-                  setActiveIndex(idx);
-                }
-              }}
-            >
-              <PoolCard pool={pool} isActive={isActive} />
+      {unfilteredPools.length === 0 ? (
+        // Empty state handling
+        <div className="w-full max-w-md mx-auto p-10 bg-charcoal-medium/30 border border-charcoal-light/30 rounded-2xl text-center shadow-lg animate-fade-in">
+          <div className="flex justify-center mb-5">
+            <div className="p-3 bg-charcoal-light/30 rounded-full text-foreground/50 border border-charcoal-light/50">
+              <HelpCircle className="w-6 h-6" />
             </div>
-          );
-        })}
-      </div>
-
-      {/* Navigation Controls (Hidden if only 1 pool) */}
-      {count > 1 && (
-        <div className="flex items-center gap-6 mt-6">
+          </div>
+          <h4 className="text-lg font-bold text-foreground mb-2">
+            No Active Pools Found
+          </h4>
+          <p className="text-sm text-foreground/50 leading-relaxed font-light mb-6">
+            There are currently no prediction pools registered on the live Bradbury contract.
+          </p>
+          <div className="flex items-center justify-center gap-3">
+            <button
+              onClick={() => setIsCreateModalOpen(true)}
+              className="px-5 py-2.5 bg-brand-gold hover:bg-brand-gold/90 text-charcoal-dark text-xs font-bold rounded-xl transition-all cursor-pointer font-display tracking-wider uppercase shadow-md"
+            >
+              Create Pool
+            </button>
+            <button
+              onClick={loadPools}
+              className="flex items-center gap-2 px-5 py-2.5 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light rounded-xl text-sm font-semibold text-foreground transition-all cursor-pointer"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Refresh List
+            </button>
+          </div>
+        </div>
+      ) : pools.length === 0 ? (
+        // Category-specific empty state handling
+        <div className="w-full max-w-md mx-auto p-10 bg-charcoal-medium/30 border border-charcoal-light/30 rounded-2xl text-center shadow-lg animate-fade-in">
+          <div className="flex justify-center mb-5">
+            <div className="p-3 bg-charcoal-light/30 rounded-full text-foreground/50 border border-charcoal-light/50">
+              <HelpCircle className="w-6 h-6" />
+            </div>
+          </div>
+          <h4 className="text-lg font-bold text-foreground mb-2">
+            No Pools in Category
+          </h4>
+          <p className="text-sm text-foreground/50 leading-relaxed font-light mb-6">
+            There are currently no active prediction pools in the "{selectedCategory}" category.
+          </p>
           <button
-            onClick={handlePrev}
-            className="p-3 bg-charcoal-medium hover:bg-charcoal-light border border-charcoal-light/30 rounded-full text-foreground/75 hover:text-foreground transition-all shadow-md cursor-pointer"
-            title="Previous prediction pool"
+            onClick={() => setSelectedCategory(categories[0] || 'All')}
+            className="px-5 py-2.5 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light rounded-xl text-sm font-semibold text-foreground transition-all cursor-pointer"
           >
-            <ChevronLeft className="w-5 h-5" />
-          </button>
-          
-          <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase">
-            {activeIndex + 1} of {count}
-          </span>
-
-          <button
-            onClick={handleNext}
-            className="p-3 bg-charcoal-medium hover:bg-charcoal-light border border-charcoal-light/30 rounded-full text-foreground/75 hover:text-foreground transition-all shadow-md cursor-pointer"
-            title="Next prediction pool"
-          >
-            <ChevronRight className="w-5 h-5" />
+            Show All
           </button>
         </div>
+      ) : (
+        <>
+          {/* 3D Carousel Stage */}
+          <div 
+            className="relative w-full max-w-sm sm:max-w-md h-[480px] flex items-center justify-center"
+            style={{ perspective: '1200px', transformStyle: 'preserve-3d' }}
+          >
+            {pools.map((pool, idx) => {
+              let offset = idx - activeIndex;
+              if (count > 2) {
+                let diff = idx - activeIndex;
+                if (diff < -count / 2) diff += count;
+                if (diff > count / 2) diff -= count;
+                offset = diff;
+              }
+              const isActive = offset === 0 || count === 1;
+
+              return (
+                <div 
+                  key={pool.pool_id} 
+                  style={getCardStyle(idx)}
+                  onClick={() => {
+                    if (isActive) {
+                      setSelectedPoolId(pool.pool_id);
+                    } else {
+                      setActiveIndex(idx);
+                    }
+                  }}
+                >
+                  <PoolCard pool={pool} isActive={isActive} />
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Navigation Controls (Hidden if only 1 pool) */}
+          {count > 1 && (
+            <div className="flex items-center gap-6 mt-6">
+              <button
+                onClick={handlePrev}
+                className="p-3 bg-charcoal-medium hover:bg-charcoal-light border border-charcoal-light/30 rounded-full text-foreground/75 hover:text-foreground transition-all shadow-md cursor-pointer"
+                title="Previous prediction pool"
+              >
+                <ChevronLeft className="w-5 h-5" />
+              </button>
+              
+              <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase">
+                {activeIndex + 1} of {count}
+              </span>
+
+              <button
+                onClick={handleNext}
+                className="p-3 bg-charcoal-medium hover:bg-charcoal-light border border-charcoal-light/30 rounded-full text-foreground/75 hover:text-foreground transition-all shadow-md cursor-pointer"
+                title="Next prediction pool"
+              >
+                <ChevronRight className="w-5 h-5" />
+              </button>
+            </div>
+          )}
+        </>
       )}
 
       {/* Sliding side drawer panel */}
