@@ -48,7 +48,7 @@ def _page(body: str) -> dict:
     return {"status": 200, "body": body}
 
 
-def _new_contested_pool(outcome_labels=None):
+def _new_contested_pool(outcome_labels=None, terms=None):
     """Deploy a pool with the creator on outcome 0 and a second wallet on 1."""
     accounts = get_accounts()
     admin, alice, bob = accounts[0], accounts[1], accounts[2]
@@ -61,7 +61,7 @@ def _new_contested_pool(outcome_labels=None):
     labels = outcome_labels or OUTCOMES
     whitelist = [addr(admin), addr(alice), addr(bob)]
     receipt = contract.create_pool(
-        args=[TERMS, labels, [SOURCE_A, SOURCE_B], whitelist, HOUR, 2 * HOUR, 0],
+        args=[terms or TERMS, labels, [SOURCE_A, SOURCE_B], whitelist, HOUR, 2 * HOUR, 0],
     ).transact(value=MIN_STAKE + CREATION_FEE)
     assert tx_execution_succeeded(receipt), "pool creation failed"
     pid = int(contract.get_pool_count(args=[]).call())
@@ -103,6 +103,30 @@ def test_happy_resolution_settles_to_correct_outcome():
     # The winning creator can claim.
     claim = bind_methods(contract.connect(admin)).claim_winnings(args=[pid]).transact()
     assert tx_execution_succeeded(claim)
+    clear_mocks()
+
+
+def test_numeric_below_threshold_resolves_correctly():
+    """A below-threshold price question must resolve to the correct side.
+
+    Reproduces a real failure where the model read the price but inverted the
+    comparison, treating a value far under the threshold as above it. The prompt
+    now forces an explicit comparison before the verdict.
+    """
+    terms = "Is the current price of Bitcoin below 100000 USD?"
+    contract, pid, accounts = _new_contested_pool(outcome_labels=["YES", "NO"], terms=terms)
+    admin = accounts[0]
+
+    # 63376 is well under 100000, so "below 100000" is true: YES, outcome 0.
+    report = "Bitcoin (BTC) price today is 63,376 USD as of 2026-06-08."
+    install_mocks({SOURCE_A: _page(report), SOURCE_B: _page(report)})
+
+    receipt = _request_resolution(contract, pid, admin)
+    assert tx_execution_succeeded(receipt), "expected resolution to settle"
+
+    pool = contract.get_pool(args=[pid]).call()
+    assert int(pool["state"]) == SETTLED
+    assert int(pool["winning_outcome_index"]) == 0  # YES: 63376 is below 100000
     clear_mocks()
 
 
