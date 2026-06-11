@@ -60,9 +60,11 @@ export default function PoolDetailDrawer() {
   const [isConfirmOpen, setIsConfirmOpen] = useState<boolean>(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [userStake, setUserStake] = useState<Stake | null>(null);
-  const [activeAction, setActiveAction] = useState<'join' | 'increase' | 'resolve' | 'claim' | null>(null);
+  const [activeAction, setActiveAction] = useState<'join' | 'increase' | 'resolve' | 'claim' | 'force_refund' | 'claim_refund' | null>(null);
 
   const [localMarker, setLocalMarker] = useState<{ txHash: string; timestamp: number } | null>(null);
+  const [forceRefundMarker, setForceRefundMarker] = useState<{ txHash: string; timestamp: number } | null>(null);
+  const [claimRefundMarker, setClaimRefundMarker] = useState<{ txHash: string; timestamp: number } | null>(null);
 
   const pendingTxFromStore = pool
     ? transactions.find(
@@ -74,6 +76,28 @@ export default function PoolDetailDrawer() {
     : undefined;
 
   const pendingResolutionTx = pendingTxFromStore || (localMarker ? { hash: localMarker.txHash } : undefined);
+
+  const pendingForceRefundTxFromStore = pool
+    ? transactions.find(
+        (tx) =>
+          tx.poolId === pool.pool_id &&
+          tx.action === 'force_refund' &&
+          tx.status !== 'finalized'
+      )
+    : undefined;
+
+  const pendingForceRefundTx = pendingForceRefundTxFromStore || (forceRefundMarker ? { hash: forceRefundMarker.txHash } : undefined);
+
+  const pendingClaimRefundTxFromStore = pool
+    ? transactions.find(
+        (tx) =>
+          tx.poolId === pool.pool_id &&
+          tx.action === 'claim_refund' &&
+          tx.status !== 'finalized'
+      )
+    : undefined;
+
+  const pendingClaimRefundTx = pendingClaimRefundTxFromStore || (claimRefundMarker ? { hash: claimRefundMarker.txHash } : undefined);
 
   // Wallet and custom write hook setup
   const connectedAddress = useWalletStore((state) => state.connectedAddress);
@@ -179,25 +203,27 @@ export default function PoolDetailDrawer() {
     setActiveAction(null);
   }, [selectedPoolId, resetWrite]);
 
-  // Sync localStorage marker on mount/pool change
+  // Sync localStorage markers on mount/pool/wallet change
   useEffect(() => {
     if (typeof window === 'undefined' || !pool) {
       setLocalMarker(null);
+      setForceRefundMarker(null);
+      setClaimRefundMarker(null);
       return;
     }
-    const key = `tontine:resolutionRequested:${pool.pool_id}`;
-    const stored = localStorage.getItem(key);
-    if (stored) {
+
+    const now = Date.now();
+    const expiryTimeMs = pool.timeout_deadline * 1000;
+    const fallbackExpiryMs = 60 * 60 * 1000; // 60 minutes
+
+    // 1. Resolution Request marker
+    const resKey = `tontine:resolutionRequested:${pool.pool_id}`;
+    const resStored = localStorage.getItem(resKey);
+    if (resStored) {
       try {
-        const parsed = JSON.parse(stored);
-        const now = Date.now();
-        
-        // Clear if past timeout_deadline (absolute epoch seconds) OR older than 60 minutes fallback
-        const expiryTimeMs = pool.timeout_deadline * 1000;
-        const isExpired = now > expiryTimeMs || (now - parsed.timestamp) > 60 * 60 * 1000;
-        
-        if (isExpired) {
-          localStorage.removeItem(key);
+        const parsed = JSON.parse(resStored);
+        if (now > expiryTimeMs || (now - parsed.timestamp) > fallbackExpiryMs) {
+          localStorage.removeItem(resKey);
           setLocalMarker(null);
         } else {
           setLocalMarker(parsed);
@@ -208,11 +234,55 @@ export default function PoolDetailDrawer() {
     } else {
       setLocalMarker(null);
     }
-  }, [pool]);
 
-  // Clear pending resolution tx from store if pool has resolved/settled
+    // 2. Force Refund marker
+    const forceKey = `tontine:forceRefundRequested:${pool.pool_id}`;
+    const forceStored = localStorage.getItem(forceKey);
+    if (forceStored) {
+      try {
+        const parsed = JSON.parse(forceStored);
+        if (now > expiryTimeMs || (now - parsed.timestamp) > fallbackExpiryMs) {
+          localStorage.removeItem(forceKey);
+          setForceRefundMarker(null);
+        } else {
+          setForceRefundMarker(parsed);
+        }
+      } catch (e) {
+        setForceRefundMarker(null);
+      }
+    } else {
+      setForceRefundMarker(null);
+    }
+
+    // 3. Claim Refund marker
+    if (connectedAddress) {
+      const claimKey = `tontine:claimRefundRequested:${pool.pool_id}:${connectedAddress.toLowerCase()}`;
+      const claimStored = localStorage.getItem(claimKey);
+      if (claimStored) {
+        try {
+          const parsed = JSON.parse(claimStored);
+          if (now > expiryTimeMs || (now - parsed.timestamp) > fallbackExpiryMs) {
+            localStorage.removeItem(claimKey);
+            setClaimRefundMarker(null);
+          } else {
+            setClaimRefundMarker(parsed);
+          }
+        } catch (e) {
+          setClaimRefundMarker(null);
+        }
+      } else {
+        setClaimRefundMarker(null);
+      }
+    } else {
+      setClaimRefundMarker(null);
+    }
+  }, [pool, connectedAddress]);
+
+  // Clear pending resolution/refund txs from store if pool has transitioned
   useEffect(() => {
-    if (pool && (pool.state === 1 || pool.state === 2)) {
+    if (!pool) return;
+
+    if (pool.state === 1 || pool.state === 2) {
       const pendingTx = transactions.find(
         (tx) => tx.poolId === pool.pool_id && tx.action === 'request_resolution'
       );
@@ -224,7 +294,33 @@ export default function PoolDetailDrawer() {
       }
       setLocalMarker(null);
     }
-  }, [pool, transactions, removeTransaction]);
+
+    if (pool.state === 3) {
+      const pendingForce = transactions.find(
+        (tx) => tx.poolId === pool.pool_id && tx.action === 'force_refund'
+      );
+      if (pendingForce) {
+        removeTransaction(pendingForce.hash);
+      }
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem(`tontine:forceRefundRequested:${pool.pool_id}`);
+      }
+      setForceRefundMarker(null);
+    }
+
+    if (pool.state === 3 && userStake?.claimed) {
+      const pendingClaim = transactions.find(
+        (tx) => tx.poolId === pool.pool_id && tx.action === 'claim_refund'
+      );
+      if (pendingClaim) {
+        removeTransaction(pendingClaim.hash);
+      }
+      if (typeof window !== 'undefined' && connectedAddress) {
+        localStorage.removeItem(`tontine:claimRefundRequested:${pool.pool_id}:${connectedAddress.toLowerCase()}`);
+      }
+      setClaimRefundMarker(null);
+    }
+  }, [pool, transactions, removeTransaction, userStake, connectedAddress]);
 
   const formatDate = (unix: number) => {
     return new Date(unix * 1000).toLocaleString('en-US', {
@@ -271,6 +367,7 @@ export default function PoolDetailDrawer() {
   const isOpen = pool ? pool.state === 0 : false;
   const isExpired = pool ? Math.floor(Date.now() / 1000) >= pool.join_deadline : false;
   const isResolutionReady = pool ? Math.floor(Date.now() / 1000) >= pool.resolution_deadline : false;
+  const isTimeout = pool ? Math.floor(Date.now() / 1000) >= pool.timeout_deadline : false;
 
   const hasJoined = userStake !== null;
 
@@ -329,6 +426,18 @@ export default function PoolDetailDrawer() {
     setIsConfirmOpen(true);
   };
 
+  const handleForceRefundClick = () => {
+    setValidationError(null);
+    setActiveAction('force_refund');
+    setIsConfirmOpen(true);
+  };
+
+  const handleClaimRefundClick = () => {
+    setValidationError(null);
+    setActiveAction('claim_refund');
+    setIsConfirmOpen(true);
+  };
+
   const handleConfirmAction = async () => {
     if (!pool) return;
     setIsConfirmOpen(false);
@@ -369,6 +478,34 @@ export default function PoolDetailDrawer() {
           functionName: 'claim_winnings',
           args: [BigInt(pool.pool_id)],
         });
+      } else if (activeAction === 'force_refund') {
+        const hash = await write({
+          address: CONTRACT_ADDRESS,
+          functionName: 'force_refund',
+          args: [BigInt(pool.pool_id)],
+          poolId: pool.pool_id,
+        });
+        if (hash && typeof window !== 'undefined') {
+          localStorage.setItem(
+            `tontine:forceRefundRequested:${pool.pool_id}`,
+            JSON.stringify({ txHash: hash, timestamp: Date.now() })
+          );
+          setForceRefundMarker({ txHash: hash, timestamp: Date.now() });
+        }
+      } else if (activeAction === 'claim_refund') {
+        const hash = await write({
+          address: CONTRACT_ADDRESS,
+          functionName: 'claim_refund',
+          args: [BigInt(pool.pool_id)],
+          poolId: pool.pool_id,
+        });
+        if (hash && typeof window !== 'undefined' && connectedAddress) {
+          localStorage.setItem(
+            `tontine:claimRefundRequested:${pool.pool_id}:${connectedAddress.toLowerCase()}`,
+            JSON.stringify({ txHash: hash, timestamp: Date.now() })
+          );
+          setClaimRefundMarker({ txHash: hash, timestamp: Date.now() });
+        }
       }
     } catch (err) {
       // Handled inside custom contract write hook
@@ -723,7 +860,53 @@ export default function PoolDetailDrawer() {
                   </div>
                 ) : pool.state === 0 ? (
                   // State 0: OPEN
-                  isResolutionReady ? (
+                  isTimeout ? (
+                    pendingForceRefundTx ? (
+                      <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
+                        <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
+                          Refund Available
+                        </span>
+                        <p className="text-xs text-foreground/60 leading-relaxed font-light">
+                          Refund requested, processing on Bradbury.
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            disabled
+                            className="flex-1 py-3 bg-brand-gold/20 text-brand-gold/50 font-bold tracking-wide rounded-xl cursor-not-allowed text-sm flex items-center justify-center gap-2"
+                          >
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            Refund Pending
+                          </button>
+                          <a
+                            href={`https://explorer-bradbury.genlayer.com/tx/${pendingForceRefundTx.hash}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-3 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light rounded-xl text-foreground/75 hover:text-foreground transition-all cursor-pointer"
+                            title="View transaction on explorer"
+                          >
+                            <ExternalLink className="w-4 h-4" />
+                          </a>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
+                        <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
+                          Refund Available
+                        </span>
+                        <p className="text-xs text-foreground/60 leading-relaxed font-light">
+                          The agreement could not be resolved within the timeout window. Any address can now trigger a force refund to transition this pool.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={handleForceRefundClick}
+                          className="w-full py-3 bg-brand-gold hover:bg-brand-gold/90 text-charcoal-dark font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm"
+                        >
+                          Force Refund
+                        </button>
+                      </div>
+                    )
+                  ) : isResolutionReady ? (
                     isWhitelisted ? (
                       pendingResolutionTx ? (
                         <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
@@ -1000,9 +1183,63 @@ export default function PoolDetailDrawer() {
                   )
                 ) : pool.state === 3 ? (
                   // State 3: REFUNDED
-                  <div className="p-4 bg-charcoal-medium/10 border border-charcoal-light/15 rounded-2xl text-xs text-foreground/50 text-center font-light leading-relaxed">
-                    This pool has been refunded.
-                  </div>
+                  hasJoined ? (
+                    userStake.claimed ? (
+                      <div className="p-4 bg-foreground/5 border border-foreground/15 rounded-2xl flex items-center justify-center gap-2.5 text-xs text-foreground/80 font-semibold">
+                        <CheckCircle2 className="w-4 h-4 text-brand-gold" />
+                        <span>Refund Claimed</span>
+                      </div>
+                    ) : pendingClaimRefundTx ? (
+                      <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
+                        <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
+                          Claim Refund
+                        </span>
+                        <p className="text-xs text-foreground/60 leading-relaxed font-light">
+                          Refund claim requested, processing on Bradbury.
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            disabled
+                            className="flex-1 py-3 bg-brand-gold/20 text-brand-gold/50 font-bold tracking-wide rounded-xl cursor-not-allowed text-sm flex items-center justify-center gap-2"
+                          >
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            Claim Pending
+                          </button>
+                          <a
+                            href={`https://explorer-bradbury.genlayer.com/tx/${pendingClaimRefundTx.hash}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-3 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light rounded-xl text-foreground/75 hover:text-foreground transition-all cursor-pointer"
+                            title="View transaction on explorer"
+                          >
+                            <ExternalLink className="w-4 h-4" />
+                          </a>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
+                        <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
+                          Claim Refund
+                        </span>
+                        <div className="space-y-1">
+                          <span className="text-[10px] uppercase font-bold tracking-widest text-foreground/40 block">Refundable Amount</span>
+                          <span className="text-lg font-bold text-brand-gold block">{weiToGen(userStake.amount)} GEN</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleClaimRefundClick}
+                          className="w-full py-3 bg-brand-gold hover:bg-brand-gold/90 text-charcoal-dark font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm"
+                        >
+                          Claim Refund
+                        </button>
+                      </div>
+                    )
+                  ) : (
+                    <div className="p-4 bg-charcoal-medium/10 border border-charcoal-light/15 rounded-2xl text-xs text-foreground/50 text-center font-light leading-relaxed">
+                      This pool has been refunded. You did not participate in this agreement.
+                    </div>
+                  )
                 ) : (
                   // State 4: EMERGENCY or default
                   <div className="p-4 bg-charcoal-medium/10 border border-charcoal-light/15 rounded-2xl text-xs text-foreground/50 text-center font-light leading-relaxed">
@@ -1108,6 +1345,10 @@ export default function PoolDetailDrawer() {
               ? 'Confirm Resolution Request'
               : activeAction === 'claim'
               ? 'Confirm Winnings Claim'
+              : activeAction === 'force_refund'
+              ? 'Confirm Force Refund'
+              : activeAction === 'claim_refund'
+              ? 'Confirm Refund Claim'
               : 'Confirm Staking Action'
           }
         >
@@ -1129,6 +1370,45 @@ export default function PoolDetailDrawer() {
               </p>
               <p className="text-[11px] text-foreground/45 italic leading-snug">
                 This process involves fetching web resources, processing LLM queries, and reaching consensus. It can take several minutes to complete on-chain.
+              </p>
+            </div>
+          ) : activeAction === 'force_refund' ? (
+            <div>
+              <p className="mb-3">Please review the details below before signing the transaction in your wallet:</p>
+              <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-2.5 mb-4">
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">Pool ID</span>
+                  <span className="font-semibold text-foreground font-mono">#{pool.pool_id}</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">Action</span>
+                  <span className="font-semibold text-brand-gold font-display uppercase">Force Refund</span>
+                </div>
+              </div>
+              <p className="text-xs text-foreground/75 mb-3 leading-relaxed">
+                This will trigger a force refund for this pool, moving it to the Refunded state because the timeout deadline has passed.
+              </p>
+              <p className="text-[11px] text-foreground/45 italic leading-snug">
+                Transactions on GenLayer Bradbury have a finality window of 25 to 40 minutes.
+              </p>
+            </div>
+          ) : activeAction === 'claim_refund' ? (
+            <div>
+              <p className="mb-3">Please review the details below before signing the transaction in your wallet:</p>
+              <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-2.5 mb-4">
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">Pool ID</span>
+                  <span className="font-semibold text-foreground font-mono">#{pool.pool_id}</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">Your Stake</span>
+                  <span className="font-bold text-foreground">
+                    {userStake ? weiToGen(userStake.amount) : '0'} GEN
+                  </span>
+                </div>
+              </div>
+              <p className="text-[11px] text-foreground/45 italic leading-snug">
+                Claiming a refund is irreversible. Transactions on GenLayer Bradbury have a finality window of 25 to 40 minutes.
               </p>
             </div>
           ) : activeAction === 'claim' ? (

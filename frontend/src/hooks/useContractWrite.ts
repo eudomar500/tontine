@@ -134,9 +134,15 @@ export function useContractWrite(options?: UseContractWriteOptions) {
         if (hashRef) {
           useTxStore.getState().removeTransaction(hashRef);
         }
-        if (params.poolId && params.functionName === 'request_resolution') {
+        if (params.poolId) {
           if (typeof window !== 'undefined') {
-            localStorage.removeItem(`tontine:resolutionRequested:${params.poolId}`);
+            if (params.functionName === 'request_resolution') {
+              localStorage.removeItem(`tontine:resolutionRequested:${params.poolId}`);
+            } else if (params.functionName === 'force_refund') {
+              localStorage.removeItem(`tontine:forceRefundRequested:${params.poolId}`);
+            } else if (params.functionName === 'claim_refund' && connectedAddress) {
+              localStorage.removeItem(`tontine:claimRefundRequested:${params.poolId}:${connectedAddress.toLowerCase()}`);
+            }
           }
         }
         const formattedError = err instanceof Error ? err : new Error(err?.message || 'Transaction execution failed');
