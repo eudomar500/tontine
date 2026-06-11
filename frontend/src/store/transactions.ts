@@ -11,11 +11,13 @@ export interface TrackedTx {
   blockHash?: string;
   blockNumber?: string;
   elapsedSeconds: number;
+  poolId?: number;
+  action?: string;
 }
 
 interface TxState {
   transactions: TrackedTx[];
-  addTransaction: (hash: string, isDemo?: boolean) => void;
+  addTransaction: (hash: string, isDemo?: boolean, poolId?: number, action?: string) => void;
   removeTransaction: (hash: string) => void;
   tickElapsed: () => void;
   updateStatuses: () => Promise<void>;
@@ -46,7 +48,7 @@ function resolveStatusName(rawStatus: string | number | undefined | null): TxSta
 export const useTxStore = create<TxState>((set, get) => ({
   transactions: [],
 
-  addTransaction: (hash, isDemo = false) => {
+  addTransaction: (hash, isDemo = false, poolId, action) => {
     const cleanHash = hash.trim();
     if (!cleanHash) return;
 
@@ -60,6 +62,8 @@ export const useTxStore = create<TxState>((set, get) => ({
         timestamp: Date.now(),
         isDemo,
         elapsedSeconds: 0,
+        poolId,
+        action,
       };
       return { transactions: [newTx, ...state.transactions] };
     });

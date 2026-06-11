@@ -17,6 +17,7 @@ import {
 import { usePoolsStore } from '../store/pools';
 import { useWalletStore } from '../store/wallet';
 import { useContractWrite } from '../hooks/useContractWrite';
+import { useTxStore } from '../store/transactions';
 import ConfirmModal from './ConfirmModal';
 import { getPool, Pool, weiToGen, stateLabel, truncateAddress, CONTRACT_ADDRESS, getStake, Stake } from '../services/contract';
 
@@ -46,6 +47,9 @@ export default function PoolDetailDrawer() {
   const setSelectedPoolId = usePoolsStore((state) => state.setSelectedPoolId);
   const loadPools = usePoolsStore((state) => state.loadPools);
 
+  const transactions = useTxStore((state) => state.transactions);
+  const removeTransaction = useTxStore((state) => state.removeTransaction);
+
   const [pool, setPool] = useState<Pool | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,6 +61,19 @@ export default function PoolDetailDrawer() {
   const [validationError, setValidationError] = useState<string | null>(null);
   const [userStake, setUserStake] = useState<Stake | null>(null);
   const [activeAction, setActiveAction] = useState<'join' | 'increase' | 'resolve' | 'claim' | null>(null);
+
+  const [localMarker, setLocalMarker] = useState<{ txHash: string; timestamp: number } | null>(null);
+
+  const pendingTxFromStore = pool
+    ? transactions.find(
+        (tx) =>
+          tx.poolId === pool.pool_id &&
+          tx.action === 'request_resolution' &&
+          tx.status !== 'finalized'
+      )
+    : undefined;
+
+  const pendingResolutionTx = pendingTxFromStore || (localMarker ? { hash: localMarker.txHash } : undefined);
 
   // Wallet and custom write hook setup
   const connectedAddress = useWalletStore((state) => state.connectedAddress);
@@ -161,6 +178,53 @@ export default function PoolDetailDrawer() {
     setUserStake(null);
     setActiveAction(null);
   }, [selectedPoolId, resetWrite]);
+
+  // Sync localStorage marker on mount/pool change
+  useEffect(() => {
+    if (typeof window === 'undefined' || !pool) {
+      setLocalMarker(null);
+      return;
+    }
+    const key = `tontine:resolutionRequested:${pool.pool_id}`;
+    const stored = localStorage.getItem(key);
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        const now = Date.now();
+        
+        // Clear if past timeout_deadline (absolute epoch seconds) OR older than 60 minutes fallback
+        const expiryTimeMs = pool.timeout_deadline * 1000;
+        const isExpired = now > expiryTimeMs || (now - parsed.timestamp) > 60 * 60 * 1000;
+        
+        if (isExpired) {
+          localStorage.removeItem(key);
+          setLocalMarker(null);
+        } else {
+          setLocalMarker(parsed);
+        }
+      } catch (e) {
+        setLocalMarker(null);
+      }
+    } else {
+      setLocalMarker(null);
+    }
+  }, [pool]);
+
+  // Clear pending resolution tx from store if pool has resolved/settled
+  useEffect(() => {
+    if (pool && (pool.state === 1 || pool.state === 2)) {
+      const pendingTx = transactions.find(
+        (tx) => tx.poolId === pool.pool_id && tx.action === 'request_resolution'
+      );
+      if (pendingTx) {
+        removeTransaction(pendingTx.hash);
+      }
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem(`tontine:resolutionRequested:${pool.pool_id}`);
+      }
+      setLocalMarker(null);
+    }
+  }, [pool, transactions, removeTransaction]);
 
   const formatDate = (unix: number) => {
     return new Date(unix * 1000).toLocaleString('en-US', {
@@ -286,11 +350,19 @@ export default function PoolDetailDrawer() {
           value: genToWei(stakeAmount),
         });
       } else if (activeAction === 'resolve') {
-        await write({
+        const hash = await write({
           address: CONTRACT_ADDRESS,
           functionName: 'request_resolution',
           args: [BigInt(pool.pool_id)],
+          poolId: pool.pool_id,
         });
+        if (hash && typeof window !== 'undefined') {
+          localStorage.setItem(
+            `tontine:resolutionRequested:${pool.pool_id}`,
+            JSON.stringify({ txHash: hash, timestamp: Date.now() })
+          );
+          setLocalMarker({ txHash: hash, timestamp: Date.now() });
+        }
       } else if (activeAction === 'claim') {
         await write({
           address: CONTRACT_ADDRESS,
@@ -653,22 +725,52 @@ export default function PoolDetailDrawer() {
                   // State 0: OPEN
                   isResolutionReady ? (
                     isWhitelisted ? (
-                      // Resolution Action Panel
-                      <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
-                        <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
-                          Pool Resolution
-                        </span>
-                        <p className="text-xs text-foreground/60 leading-relaxed font-light">
-                          The resolution deadline has passed. As a whitelisted participant, you can trigger the GenLayer LLM oracle to resolve this pool.
-                        </p>
-                        <button
-                          type="button"
-                          onClick={handleResolveClick}
-                          className="w-full py-3 bg-brand-gold hover:bg-brand-gold/90 text-charcoal-dark font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm"
-                        >
-                          Request Resolution
-                        </button>
-                      </div>
+                      pendingResolutionTx ? (
+                        <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
+                          <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
+                            Pool Resolution
+                          </span>
+                          <p className="text-xs text-foreground/60 leading-relaxed font-light">
+                            Resolution requested, processing on Bradbury.
+                          </p>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              disabled
+                              className="flex-1 py-3 bg-brand-gold/20 text-brand-gold/50 font-bold tracking-wide rounded-xl cursor-not-allowed text-sm flex items-center justify-center gap-2"
+                            >
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              Resolution Pending
+                            </button>
+                            <a
+                              href={`https://explorer-bradbury.genlayer.com/tx/${pendingResolutionTx.hash}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="p-3 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light rounded-xl text-foreground/75 hover:text-foreground transition-all cursor-pointer"
+                              title="View transaction on explorer"
+                            >
+                              <ExternalLink className="w-4 h-4" />
+                            </a>
+                          </div>
+                        </div>
+                      ) : (
+                        // Resolution Action Panel
+                        <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
+                          <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
+                            Pool Resolution
+                          </span>
+                          <p className="text-xs text-foreground/60 leading-relaxed font-light">
+                            The resolution deadline has passed. As a whitelisted participant, you can trigger the GenLayer LLM oracle to resolve this pool.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={handleResolveClick}
+                            className="w-full py-3 bg-brand-gold hover:bg-brand-gold/90 text-charcoal-dark font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm"
+                          >
+                            Request Resolution
+                          </button>
+                        </div>
+                      )
                     ) : (
                       // Resolution available, but not whitelisted
                       <div className="p-4 bg-charcoal-medium/10 border border-charcoal-light/15 rounded-2xl flex items-start gap-3 text-xs text-foreground/50">

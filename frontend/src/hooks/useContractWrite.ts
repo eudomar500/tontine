@@ -27,6 +27,7 @@ export function useContractWrite(options?: UseContractWriteOptions) {
       functionName: string;
       args: any[];
       value?: bigint;
+      poolId?: number;
     }) => {
       if (!connectedAddress || !connectedProvider?.provider) {
         const err = new Error('Wallet not connected or provider unavailable');
@@ -39,6 +40,7 @@ export function useContractWrite(options?: UseContractWriteOptions) {
       setStatus('signing');
       setTxHash(null);
       setError(null);
+      let hashRef: `0x${string}` | undefined = undefined;
 
       try {
         const client = createClient({
@@ -53,12 +55,13 @@ export function useContractWrite(options?: UseContractWriteOptions) {
           args: params.args,
           value: params.value ?? 0n,
         });
+        hashRef = hash;
 
         setTxHash(hash);
         setStatus('pending');
 
         // Track transaction globally for floating NetworkStatus widget
-        addTransaction(hash, false);
+        addTransaction(hash, false, params.poolId, params.functionName);
 
         // Wait for transaction to be accepted on-chain
         try {
@@ -128,6 +131,14 @@ export function useContractWrite(options?: UseContractWriteOptions) {
       } catch (err: any) {
         console.error('Contract transaction execution error:', err);
         setStatus('error');
+        if (hashRef) {
+          useTxStore.getState().removeTransaction(hashRef);
+        }
+        if (params.poolId && params.functionName === 'request_resolution') {
+          if (typeof window !== 'undefined') {
+            localStorage.removeItem(`tontine:resolutionRequested:${params.poolId}`);
+          }
+        }
         const formattedError = err instanceof Error ? err : new Error(err?.message || 'Transaction execution failed');
         setError(formattedError);
         options?.onError?.(formattedError);
