@@ -276,7 +276,7 @@ export default function PoolDetailDrawer() {
     } else {
       setClaimRefundMarker(null);
     }
-  }, [pool, connectedAddress]);
+  }, [pool, connectedAddress, transactions]);
 
   // Clear pending resolution/refund txs from store if pool has transitioned
   useEffect(() => {
@@ -459,19 +459,12 @@ export default function PoolDetailDrawer() {
           value: genToWei(stakeAmount),
         });
       } else if (activeAction === 'resolve') {
-        const hash = await write({
+        await write({
           address: CONTRACT_ADDRESS,
           functionName: 'request_resolution',
           args: [BigInt(pool.pool_id)],
           poolId: pool.pool_id,
         });
-        if (hash && typeof window !== 'undefined') {
-          localStorage.setItem(
-            `tontine:resolutionRequested:${pool.pool_id}`,
-            JSON.stringify({ txHash: hash, timestamp: Date.now() })
-          );
-          setLocalMarker({ txHash: hash, timestamp: Date.now() });
-        }
       } else if (activeAction === 'claim') {
         await write({
           address: CONTRACT_ADDRESS,
@@ -479,33 +472,19 @@ export default function PoolDetailDrawer() {
           args: [BigInt(pool.pool_id)],
         });
       } else if (activeAction === 'force_refund') {
-        const hash = await write({
+        await write({
           address: CONTRACT_ADDRESS,
           functionName: 'force_refund',
           args: [BigInt(pool.pool_id)],
           poolId: pool.pool_id,
         });
-        if (hash && typeof window !== 'undefined') {
-          localStorage.setItem(
-            `tontine:forceRefundRequested:${pool.pool_id}`,
-            JSON.stringify({ txHash: hash, timestamp: Date.now() })
-          );
-          setForceRefundMarker({ txHash: hash, timestamp: Date.now() });
-        }
       } else if (activeAction === 'claim_refund') {
-        const hash = await write({
+        await write({
           address: CONTRACT_ADDRESS,
           functionName: 'claim_refund',
           args: [BigInt(pool.pool_id)],
           poolId: pool.pool_id,
         });
-        if (hash && typeof window !== 'undefined' && connectedAddress) {
-          localStorage.setItem(
-            `tontine:claimRefundRequested:${pool.pool_id}:${connectedAddress.toLowerCase()}`,
-            JSON.stringify({ txHash: hash, timestamp: Date.now() })
-          );
-          setClaimRefundMarker({ txHash: hash, timestamp: Date.now() });
-        }
       }
     } catch (err) {
       // Handled inside custom contract write hook

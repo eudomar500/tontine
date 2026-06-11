@@ -63,6 +63,19 @@ export function useContractWrite(options?: UseContractWriteOptions) {
         // Track transaction globally for floating NetworkStatus widget
         addTransaction(hash, false, params.poolId, params.functionName);
 
+        // Synchronously write localStorage markers on broadcast for resolution and refund actions
+        if (params.poolId) {
+          if (typeof window !== 'undefined') {
+            if (params.functionName === 'request_resolution') {
+              localStorage.setItem(`tontine:resolutionRequested:${params.poolId}`, JSON.stringify({ txHash: hash, timestamp: Date.now() }));
+            } else if (params.functionName === 'force_refund') {
+              localStorage.setItem(`tontine:forceRefundRequested:${params.poolId}`, JSON.stringify({ txHash: hash, timestamp: Date.now() }));
+            } else if (params.functionName === 'claim_refund' && connectedAddress) {
+              localStorage.setItem(`tontine:claimRefundRequested:${params.poolId}:${connectedAddress.toLowerCase()}`, JSON.stringify({ txHash: hash, timestamp: Date.now() }));
+            }
+          }
+        }
+
         // Wait for transaction to be accepted on-chain
         try {
           const receipt = await client.waitForTransactionReceipt({
