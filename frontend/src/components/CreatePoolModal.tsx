@@ -46,7 +46,9 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
 
   // Form states
   const [terms, setTerms] = useState<string>('');
-  const [outcomes, setOutcomes] = useState<string[]>(['YES', 'NO']);
+  const [resolutionDate, setResolutionDate] = useState<string>('');
+  const [isMultiOutcome, setIsMultiOutcome] = useState<boolean>(false);
+  const [customOutcomes, setCustomOutcomes] = useState<string[]>(['', '']);
   const [sources, setSources] = useState<string[]>(['', '']);
   const [whitelist, setWhitelist] = useState<string[]>([]);
   const [joinOffsetType, setJoinOffsetType] = useState<string>('24h');
@@ -59,7 +61,19 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
 
   // UI state
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [validationWarning, setValidationWarning] = useState<string | null>(null);
   const [isConfirmOpen, setIsConfirmOpen] = useState<boolean>(false);
+
+  const displayOutcomes = isMultiOutcome
+    ? [...customOutcomes.map((o) => o.trim()), 'Other / None of the above']
+    : ['YES', 'NO'];
+
+  // Keep creator index in bounds when outcomes change
+  useEffect(() => {
+    if (creatorOutcomeIndex >= displayOutcomes.length) {
+      setCreatorOutcomeIndex(0);
+    }
+  }, [displayOutcomes.length, creatorOutcomeIndex]);
 
   // Fetch live fee on load/open
   useEffect(() => {
@@ -110,7 +124,9 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
   // Reset local form state
   const handleReset = useCallback(() => {
     setTerms('');
-    setOutcomes(['YES', 'NO']);
+    setResolutionDate('');
+    setIsMultiOutcome(false);
+    setCustomOutcomes(['', '']);
     setSources(['', '']);
     setWhitelist(connectedAddress ? [connectedAddress] : []);
     setJoinOffsetType('24h');
@@ -121,6 +137,7 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
     setCreatorStake('');
     setCategory('');
     setValidationError(null);
+    setValidationWarning(null);
     setIsConfirmOpen(false);
     resetWrite();
   }, [connectedAddress, resetWrite]);
@@ -132,7 +149,7 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
   };
 
   // Convert offset types to seconds
-  const getJoinOffsetSeconds = (): number => {
+  const getJoinOffsetSeconds = useCallback((): number => {
     switch (joinOffsetType) {
       case '1h':
         return 3600;
@@ -150,9 +167,9 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
       default:
         return 0;
     }
-  };
+  }, [joinOffsetType, joinOffsetCustom]);
 
-  const getResolutionGapSeconds = (): number => {
+  const getResolutionGapSeconds = useCallback((): number => {
     switch (resolutionOffsetType) {
       case '1h':
         return 3600;
@@ -168,7 +185,45 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
       default:
         return 0;
     }
-  };
+  }, [resolutionOffsetType, resolutionOffsetCustom]);
+
+  // Live validation warning check
+  useEffect(() => {
+    if (!terms.trim() || !resolutionDate.trim()) {
+      setValidationWarning(null);
+      return;
+    }
+
+    // Check 1: Verifiable condition keywords (soft warning only, non-blocking)
+    const lowerTerms = terms.toLowerCase();
+    const keywords = [
+      'will', 'close', 'above', 'below', 'price', 'reach', 'equal', 'win', 'lose',
+      'happen', 'total', 'higher', 'lower', 'more', 'less', 'at least', 'before',
+      'after', 'by', 'succeed', 'fail', 'team', 'match', 'score', 'market', 'cap'
+    ];
+    const hasKeyword = keywords.some((kw) => lowerTerms.includes(kw));
+    const hasNumber = /\d+/.test(lowerTerms);
+
+    if (!hasKeyword && !hasNumber) {
+      setValidationWarning('Agreement terms may lack a clear, objective condition. Ensure the outcome is testable.');
+      return;
+    }
+
+    // Check 2: Resolution date vs on-chain resolution window
+    const parsedDate = Date.parse(resolutionDate);
+    if (!isNaN(parsedDate)) {
+      const joinSec = getJoinOffsetSeconds();
+      const gapSec = getResolutionGapSeconds();
+      // On-chain resolution becomes available at resolution_deadline = joinOffset + gapOffset from deployment
+      const resolutionDeadlineMs = Date.now() + (joinSec + gapSec) * 1000;
+      if (parsedDate > resolutionDeadlineMs) {
+        setValidationWarning('Resolution date is after the on-chain resolution window starts. Users may request resolution before the target event occurs.');
+        return;
+      }
+    }
+
+    setValidationWarning(null);
+  }, [terms, resolutionDate, getJoinOffsetSeconds, getResolutionGapSeconds]);
 
   // Field validation checks
   const validateForm = (): boolean => {
@@ -184,28 +239,43 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
       setValidationError('Agreement terms are required');
       return false;
     }
-    if (terms.length > 2000) {
-      setValidationError('Terms cannot exceed 2000 characters');
+    if (!resolutionDate.trim()) {
+      setValidationError('Resolution date or moment is required');
+      return false;
+    }
+    const combinedTerms = `${terms.trim()} (Resolution reference: ${resolutionDate.trim()})`;
+    if (combinedTerms.length > 2000) {
+      setValidationError('Combined terms and resolution reference cannot exceed 2000 characters');
       return false;
     }
 
     // Outcomes validation
-    if (outcomes.length < 2 || outcomes.length > 10) {
-      setValidationError('Between 2 and 10 outcomes are required');
-      return false;
+    if (isMultiOutcome) {
+      if (customOutcomes.length < 2 || customOutcomes.length > 9) {
+        setValidationError('Between 2 and 9 custom outcomes are required');
+        return false;
+      }
+      for (let i = 0; i < customOutcomes.length; i++) {
+        const lbl = customOutcomes[i]?.trim();
+        if (!lbl) {
+          setValidationError(`Outcome #${i + 1} label cannot be empty`);
+          return false;
+        }
+        if (lbl.length > 500) {
+          setValidationError(`Outcome #${i + 1} label cannot exceed 500 characters`);
+          return false;
+        }
+        if (lbl.toLowerCase() === 'other / none of the above') {
+          setValidationError(`Outcome label cannot conflict with the reserved other option`);
+          return false;
+        }
+      }
     }
-    for (let i = 0; i < outcomes.length; i++) {
-      const lbl = outcomes[i]?.trim();
-      if (!lbl) {
-        setValidationError(`Outcome #${i + 1} label cannot be empty`);
-        return false;
-      }
-      if (lbl.length > 500) {
-        setValidationError(`Outcome #${i + 1} label cannot exceed 500 characters`);
-        return false;
-      }
-      for (let j = i + 1; j < outcomes.length; j++) {
-        if (outcomes[j]?.trim().toLowerCase() === lbl.toLowerCase()) {
+
+    for (let i = 0; i < displayOutcomes.length; i++) {
+      const lbl = displayOutcomes[i];
+      for (let j = i + 1; j < displayOutcomes.length; j++) {
+        if (displayOutcomes[j].toLowerCase() === lbl.toLowerCase()) {
           setValidationError(`Duplicate outcome labels are not allowed: "${lbl}"`);
           return false;
         }
@@ -308,13 +378,15 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
     const creatorStakeWei = genToWei(creatorStake);
     const totalValueWei = creationFee + creatorStakeWei;
 
+    const combinedTerms = `${terms.trim()} (Resolution reference: ${resolutionDate.trim()})`;
+
     try {
       await write({
         address: CONTRACT_ADDRESS,
         functionName: 'create_pool',
         args: [
-          terms.trim(),
-          outcomes.map((o) => o.trim()),
+          combinedTerms,
+          displayOutcomes.map((o) => o.trim()),
           sources.map((s) => s.trim()),
           whitelistAsCalldataAddresses,
           BigInt(joinOffset),
@@ -574,6 +646,100 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
                       </div>
                     </div>
 
+                    {/* Resolution date or moment */}
+                    <div className="space-y-2">
+                      <label className="text-[10px] uppercase font-bold tracking-widest text-foreground/45 block">
+                        Resolution Date or Moment
+                      </label>
+                      <div className="space-y-2">
+                        <input
+                          type="text"
+                          placeholder="e.g. 2026-12-31 23:59 UTC, end of June 2026, or on [date]"
+                          value={resolutionDate}
+                          onChange={(e) => {
+                            setResolutionDate(e.target.value);
+                            setValidationError(null);
+                          }}
+                          className="w-full px-3.5 py-2.5 bg-charcoal-dark border border-charcoal-light focus:border-foreground/15 rounded-xl text-xs text-foreground focus:outline-none transition-colors placeholder-foreground/20 font-semibold"
+                        />
+                        <div className="flex gap-2 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const today = new Date();
+                              const year = today.getFullYear();
+                              const month = String(today.getMonth() + 1).padStart(2, '0');
+                              const day = String(today.getDate()).padStart(2, '0');
+                              setResolutionDate(`${year}-${month}-${day} 23:59 UTC`);
+                              setValidationError(null);
+                            }}
+                            className="px-2.5 py-1 bg-charcoal-dark hover:bg-charcoal-light border border-charcoal-light/50 rounded-lg text-[10px] font-semibold text-foreground/60 hover:text-foreground transition-all cursor-pointer"
+                          >
+                            End of Today
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const today = new Date();
+                              const nextMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+                              const year = nextMonth.getFullYear();
+                              const month = String(nextMonth.getMonth() + 1).padStart(2, '0');
+                              const day = String(nextMonth.getDate()).padStart(2, '0');
+                              setResolutionDate(`${year}-${month}-${day} 23:59 UTC`);
+                              setValidationError(null);
+                            }}
+                            className="px-2.5 py-1 bg-charcoal-dark hover:bg-charcoal-light border border-charcoal-light/50 rounded-lg text-[10px] font-semibold text-foreground/60 hover:text-foreground transition-all cursor-pointer"
+                          >
+                            End of Month
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const today = new Date();
+                              const year = today.getFullYear();
+                              setResolutionDate(`${year}-12-31 23:59 UTC`);
+                              setValidationError(null);
+                            }}
+                            className="px-2.5 py-1 bg-charcoal-dark hover:bg-charcoal-light border border-charcoal-light/50 rounded-lg text-[10px] font-semibold text-foreground/60 hover:text-foreground transition-all cursor-pointer"
+                          >
+                            End of Year
+                          </button>
+                        </div>
+                        <p className="text-[10px] text-foreground/40 font-light leading-relaxed">
+                          The reference moment the question refers to. This is appended to the agreement terms so the LLM knows when to evaluate the condition.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Multiple outcomes toggle */}
+                    <div className="flex items-center justify-between p-3.5 bg-charcoal-dark/20 border border-charcoal-light/30 rounded-xl">
+                      <div className="space-y-0.5 pr-4">
+                        <span className="text-xs font-semibold text-foreground">
+                          Multiple outcomes (advanced)
+                        </span>
+                        <p className="text-[10px] text-foreground/45 font-light leading-snug">
+                          Configure custom outcomes (e.g. specific candidates or teams) instead of binary YES/NO.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsMultiOutcome(!isMultiOutcome);
+                          setCreatorOutcomeIndex(0);
+                          setValidationError(null);
+                        }}
+                        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                          isMultiOutcome ? 'bg-brand-gold' : 'bg-charcoal-medium'
+                        }`}
+                      >
+                        <span
+                          className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-charcoal-dark shadow ring-0 transition duration-200 ease-in-out ${
+                            isMultiOutcome ? 'translate-x-4' : 'translate-x-0'
+                          }`}
+                        />
+                      </button>
+                    </div>
+
                     {/* Outcomes dynamic list */}
                     <div className="space-y-3">
                       <div className="flex justify-between items-center">
@@ -581,59 +747,91 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
                           Outcomes Labels
                         </label>
                         <span className="text-[9px] text-foreground/40 font-light">
-                          2 to 10 options
+                          {isMultiOutcome ? '2 to 9 custom + Other' : 'Binary YES/NO'}
                         </span>
                       </div>
-                      <div className="grid grid-cols-2 gap-2.5">
-                        {outcomes.map((label, idx) => (
-                          <div key={idx} className="relative flex items-center">
+
+                      {!isMultiOutcome ? (
+                        <div className="grid grid-cols-2 gap-2.5">
+                          <div className="relative flex items-center">
                             <input
                               type="text"
-                              placeholder={`Outcome #${idx + 1}`}
-                              value={label}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                setOutcomes((prev) => {
-                                  const updated = [...prev];
-                                  updated[idx] = val;
-                                  return updated;
-                                });
-                                setValidationError(null);
-                              }}
-                              className="w-full pl-3.5 pr-9 py-2.5 bg-charcoal-dark border border-charcoal-light focus:border-foreground/15 rounded-xl text-xs text-foreground focus:outline-none transition-colors placeholder-foreground/20 font-semibold"
+                              disabled
+                              value="YES"
+                              className="w-full pl-3.5 pr-9 py-2.5 bg-charcoal-dark/20 border border-charcoal-light/30 rounded-xl text-xs text-foreground/40 focus:outline-none font-semibold cursor-not-allowed"
                             />
-                            {outcomes.length > 2 && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setOutcomes((prev) => prev.filter((_, i) => i !== idx));
-                                  // Adjust creator selection index if needed
-                                  if (creatorOutcomeIndex >= outcomes.length - 1) {
-                                    setCreatorOutcomeIndex(0);
-                                  }
+                          </div>
+                          <div className="relative flex items-center">
+                            <input
+                              type="text"
+                              disabled
+                              value="NO"
+                              className="w-full pl-3.5 pr-9 py-2.5 bg-charcoal-dark/20 border border-charcoal-light/30 rounded-xl text-xs text-foreground/40 focus:outline-none font-semibold cursor-not-allowed"
+                            />
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-2.5">
+                          {customOutcomes.map((label, idx) => (
+                            <div key={idx} className="relative flex items-center">
+                              <input
+                                type="text"
+                                placeholder={`Outcome Option #${idx + 1}`}
+                                value={label}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setCustomOutcomes((prev) => {
+                                    const updated = [...prev];
+                                    updated[idx] = val;
+                                    return updated;
+                                  });
                                   setValidationError(null);
                                 }}
-                                className="absolute right-2.5 p-1 hover:bg-charcoal-light/50 text-foreground/40 hover:text-brand-magenta transition-all rounded-md cursor-pointer"
-                                title="Remove outcome"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            )}
+                                className="w-full pl-3.5 pr-9 py-2.5 bg-charcoal-dark border border-charcoal-light focus:border-foreground/15 rounded-xl text-xs text-foreground focus:outline-none transition-colors placeholder-foreground/20 font-semibold"
+                              />
+                              {customOutcomes.length > 2 && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setCustomOutcomes((prev) => prev.filter((_, i) => i !== idx));
+                                    setValidationError(null);
+                                  }}
+                                  className="absolute right-2.5 p-1 hover:bg-charcoal-light/50 text-foreground/40 hover:text-brand-magenta transition-all rounded-md cursor-pointer"
+                                  title="Remove option"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                          
+                          {/* Automatic Other outcome */}
+                          <div className="relative flex items-center">
+                            <input
+                              type="text"
+                              disabled
+                              value="Other / None of the above"
+                              className="w-full pl-3.5 pr-9 py-2.5 bg-charcoal-dark/20 border border-charcoal-light/30 rounded-xl text-xs text-foreground/45 focus:outline-none font-semibold cursor-not-allowed italic"
+                            />
+                            <span className="absolute right-3.5 text-[9px] font-semibold text-foreground/40 uppercase tracking-wider select-none">
+                              Automatic
+                            </span>
                           </div>
-                        ))}
-                      </div>
-                      {outcomes.length < 10 && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setOutcomes((prev) => [...prev, '']);
-                            setValidationError(null);
-                          }}
-                          className="flex items-center gap-1.5 px-3 py-1.5 bg-charcoal-dark hover:bg-charcoal-light border border-charcoal-light/50 rounded-lg text-[10px] font-semibold text-foreground/70 hover:text-foreground transition-all cursor-pointer mt-1"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                          Add Option
-                        </button>
+
+                          {customOutcomes.length < 9 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCustomOutcomes((prev) => [...prev, '']);
+                                setValidationError(null);
+                              }}
+                              className="flex items-center gap-1.5 px-3 py-1.5 bg-charcoal-dark hover:bg-charcoal-light border border-charcoal-light/50 rounded-lg text-[10px] font-semibold text-foreground/70 hover:text-foreground transition-all cursor-pointer mt-1"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                              Add Option
+                            </button>
+                          )}
+                        </div>
                       )}
                     </div>
 
@@ -856,7 +1054,7 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
                           }}
                           className="w-full px-3.5 py-2.5 bg-charcoal-dark border border-charcoal-light rounded-xl text-xs text-foreground/80 focus:outline-none transition-colors cursor-pointer"
                         >
-                          {outcomes.map((label, idx) => (
+                          {displayOutcomes.map((label: string, idx: number) => (
                             <option key={idx} value={idx}>
                               {label.trim() || `Outcome #${idx + 1}`}
                             </option>
@@ -949,6 +1147,14 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
             </div>
           )}
 
+          {/* Warning notification display */}
+          {validationWarning && !validationError && (
+            <div className="px-5 py-3.5 bg-brand-gold/5 border-t border-b border-brand-gold/15 flex items-start gap-2.5 text-xs text-brand-gold font-semibold">
+              <AlertCircle className="w-4.5 h-4.5 shrink-0 mt-0.5" />
+              <span>{validationWarning}</span>
+            </div>
+          )}
+
           {/* Footer controls */}
           <div className="flex items-center justify-end gap-3 p-4 border-t border-charcoal-light bg-charcoal-dark/10">
             <button
@@ -989,14 +1195,14 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
                   Terms
                 </span>
                 <p className="text-xs text-foreground leading-normal font-mono font-medium max-h-24 overflow-y-auto whitespace-pre-wrap select-all">
-                  {terms}
+                  {terms.trim()} (Resolution reference: {resolutionDate.trim()})
                 </p>
               </div>
               <div className="grid grid-cols-2 gap-3 text-xs">
                 <div>
                   <span className="text-foreground/45 block mb-0.5">Your Selected Outcome</span>
                   <span className="font-semibold text-brand-gold">
-                    {outcomes[creatorOutcomeIndex]}
+                    {displayOutcomes[creatorOutcomeIndex]}
                   </span>
                 </div>
                 <div>
