@@ -49,6 +49,7 @@ export default function PoolDetailDrawer() {
 
   const transactions = useTxStore((state) => state.transactions);
   const removeTransaction = useTxStore((state) => state.removeTransaction);
+  const addTransaction = useTxStore((state) => state.addTransaction);
 
   const [pool, setPool] = useState<Pool | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -60,6 +61,8 @@ export default function PoolDetailDrawer() {
   const [isConfirmOpen, setIsConfirmOpen] = useState<boolean>(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [userStake, setUserStake] = useState<Stake | null>(null);
+  const [isStakeLoading, setIsStakeLoading] = useState<boolean>(false);
+  const [isStakeChecked, setIsStakeChecked] = useState<boolean>(false);
   const [activeAction, setActiveAction] = useState<'join' | 'increase' | 'resolve' | 'claim' | 'force_refund' | 'claim_refund' | null>(null);
 
   const [localMarker, setLocalMarker] = useState<{ txHash: string; timestamp: number } | null>(null);
@@ -119,8 +122,10 @@ export default function PoolDetailDrawer() {
   const fetchUserStake = useCallback(async (poolId: number, address: string | null) => {
     if (!address) {
       setUserStake(null);
+      setIsStakeChecked(true);
       return;
     }
+    setIsStakeLoading(true);
     try {
       const stake = await getStake(poolId, address);
       setUserStake(stake);
@@ -146,6 +151,9 @@ export default function PoolDetailDrawer() {
       if (!isNoStake) {
         console.error('Failed to fetch user stake details:', err);
       }
+    } finally {
+      setIsStakeLoading(false);
+      setIsStakeChecked(true);
     }
   }, []);
 
@@ -185,8 +193,10 @@ export default function PoolDetailDrawer() {
 
   // Fetch user stake details dynamically upon selection or wallet changes
   useEffect(() => {
+    setIsStakeChecked(false);
     if (!selectedPoolId) {
       setUserStake(null);
+      setIsStakeChecked(true);
       return;
     }
     fetchUserStake(selectedPoolId, connectedAddress);
@@ -278,21 +288,35 @@ export default function PoolDetailDrawer() {
     }
   }, [pool, connectedAddress, transactions]);
 
-  // Clear pending resolution/refund txs from store if pool has transitioned
+  // Clear pending resolution/refund txs from store if pool has transitioned or action is completed
   useEffect(() => {
     if (!pool) return;
 
     if (pool.state === 1 || pool.state === 2) {
-      const pendingTx = transactions.find(
-        (tx) => tx.poolId === pool.pool_id && tx.action === 'request_resolution'
-      );
-      if (pendingTx) {
-        removeTransaction(pendingTx.hash);
+      // We must check if the stake check has completed. If isStakeChecked is false, the fetch has
+      // not yet finished, meaning userStake is temporarily null. Clearing the tracker here would
+      // create a race condition on page load/mount that prematurely deletes localMarkers.
+      if (isStakeLoading || !isStakeChecked) return;
+
+      const isWinner = userStake !== null && userStake.outcome_index === pool.winning_outcome_index;
+      
+      // Only clear the resolution marker on genuine completion from the connected wallet's
+      // own perspective. For a winner, this is after they successfully claim their winnings.
+      // We must never clear it merely because a loser or non-participant is viewing the settled pool.
+      const shouldClear = pool.state === 2 && isWinner && userStake.claimed;
+
+      if (shouldClear) {
+        const pendingTx = transactions.find(
+          (tx) => tx.poolId === pool.pool_id && tx.action === 'request_resolution'
+        );
+        if (pendingTx) {
+          removeTransaction(pendingTx.hash);
+        }
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem(`tontine:resolutionRequested:${pool.pool_id}`);
+        }
+        setLocalMarker(null);
       }
-      if (typeof window !== 'undefined') {
-        localStorage.removeItem(`tontine:resolutionRequested:${pool.pool_id}`);
-      }
-      setLocalMarker(null);
     }
 
     if (pool.state === 3) {
@@ -304,8 +328,10 @@ export default function PoolDetailDrawer() {
       }
       if (typeof window !== 'undefined') {
         localStorage.removeItem(`tontine:forceRefundRequested:${pool.pool_id}`);
+        localStorage.removeItem(`tontine:resolutionRequested:${pool.pool_id}`);
       }
       setForceRefundMarker(null);
+      setLocalMarker(null);
     }
 
     if (pool.state === 3 && userStake?.claimed) {
@@ -320,7 +346,24 @@ export default function PoolDetailDrawer() {
       }
       setClaimRefundMarker(null);
     }
-  }, [pool, transactions, removeTransaction, userStake, connectedAddress]);
+  }, [pool, transactions, removeTransaction, userStake, isStakeLoading, isStakeChecked, connectedAddress]);
+
+  // Sync resolution tx from local storage back into the transaction store on page load / mount
+  useEffect(() => {
+    if (!pool || pool.state !== 2) return;
+    if (localMarker && !transactions.some((tx) => tx.hash === localMarker.txHash)) {
+      addTransaction(localMarker.txHash, false, pool.pool_id, 'request_resolution');
+    }
+  }, [pool, localMarker, transactions, addTransaction]);
+
+  // Automatically dismiss the local write state for resolution and refund actions once the transaction is broadcast.
+  // This allows the UI to transition reactively to the dedicated pending/resolving pool views.
+  useEffect(() => {
+    if (writeStatus === 'pending' && (activeAction === 'resolve' || activeAction === 'force_refund' || activeAction === 'claim_refund')) {
+      resetWrite();
+      setActiveAction(null);
+    }
+  }, [writeStatus, activeAction, resetWrite]);
 
   const formatDate = (unix: number) => {
     return new Date(unix * 1000).toLocaleString('en-US', {
@@ -387,6 +430,42 @@ export default function PoolDetailDrawer() {
       // Ignore calculation errors
     }
   }
+
+  // Find the resolution transaction to evaluate finalization status
+  const resolutionTx = pool
+    ? transactions.find(
+        (tx) =>
+          tx.poolId === pool.pool_id &&
+          tx.action === 'request_resolution'
+      )
+    : undefined;
+
+  // Safety default: only allow claiming if finalization is positively confirmed
+  const isFinalized = resolutionTx?.status === 'finalized';
+
+  // Compute finalization time estimate (ETA) based on transaction progress
+  const getEtaText = () => {
+    if (!resolutionTx && !localMarker) return null;
+    const isDemo = resolutionTx?.isDemo;
+    const totalDuration = isDemo ? 60 : 2400; // 60s for demo, 40 minutes (2400s) for real transaction finality
+    
+    // Anchor the elapsed calculation to the persisted broadcast timestamp if available.
+    // This prevents the countdown from resetting when the in-memory transaction store is cleared on refresh.
+    const elapsed = localMarker
+      ? Math.floor((Date.now() - localMarker.timestamp) / 1000)
+      : resolutionTx
+      ? resolutionTx.elapsedSeconds
+      : 0;
+
+    const remaining = totalDuration - elapsed;
+    if (remaining <= 0) {
+      return 'Finalizing shortly';
+    }
+    const mins = Math.ceil(remaining / 60);
+    return `~${mins} min${mins > 1 ? 's' : ''} remaining`;
+  };
+
+  const etaText = getEtaText();
 
   const handleJoinClick = () => {
     if (selectedOutcomeIndex === null) {
@@ -1129,7 +1208,7 @@ export default function PoolDetailDrawer() {
                           <CheckCircle2 className="w-4 h-4 text-brand-gold" />
                           <span>Winnings Claimed</span>
                         </div>
-                      ) : (
+                      ) : isFinalized ? (
                         // Claim Action Panel
                         <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
                           <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
@@ -1146,6 +1225,24 @@ export default function PoolDetailDrawer() {
                           >
                             Claim Winnings
                           </button>
+                        </div>
+                      ) : (
+                        // Resolution settled but not finalized on-chain
+                        <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
+                          <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
+                            Claim Winnings
+                          </span>
+                          <div className="space-y-2">
+                            <p className="text-xs text-foreground/60 leading-relaxed font-light">
+                              Resolution settled. Waiting for on-chain finalization before winnings can be claimed.
+                            </p>
+                            {etaText && (
+                              <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-brand-gold bg-brand-gold/5 border border-brand-gold/15 px-2.5 py-1 rounded-lg">
+                                <Clock className="w-3.5 h-3.5 shrink-0" />
+                                {etaText}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       )
                     ) : (
