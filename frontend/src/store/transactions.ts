@@ -23,7 +23,7 @@ interface TxState {
   updateStatuses: () => Promise<void>;
 }
 
-// Local status names resolver map (handles SDK/RPC discrepancies)
+// Local status names resolver map (handles SDK/RPC discrepancies and GenLayer status codes)
 const STATUS_NAMES: Record<string, TxStatus> = {
   pending: 'submitted',
   proposing: 'submitted',
@@ -35,8 +35,10 @@ const STATUS_NAMES: Record<string, TxStatus> = {
   '1': 'submitted',
   '2': 'submitted',
   '3': 'submitted',
-  '4': 'accepted',
-  '5': 'finalized',
+  '4': 'submitted',
+  '5': 'accepted',
+  '6': 'submitted',
+  '7': 'finalized',
 };
 
 function resolveStatusName(rawStatus: string | number | undefined | null): TxStatus {

@@ -125,32 +125,16 @@ async function callRpc(method: string, params: any[]): Promise<any> {
 export async function getTransactionReceipt(hash: string): Promise<TransactionReceipt | null> {
   return rpcQueue.enqueue(async () => {
     return withRateLimitRetry(async () => {
-      // First try standard receipt method
-      try {
-        const receipt = await callRpc('eth_getTransactionReceipt', [hash]);
-        if (receipt) {
-          return {
-            status: receipt.status,
-            blockHash: receipt.blockHash,
-            blockNumber: receipt.blockNumber,
-            transactionHash: receipt.transactionHash || hash,
-          };
-        }
-      } catch (error) {
-        console.warn('eth_getTransactionReceipt failed, trying fallback:', error);
-      }
-
-      // Fallback: get transaction directly to inspect status
-      const tx = await callRpc('eth_getTransactionByHash', [hash]);
-      if (tx) {
+      // Query GenLayer consensus status directly instead of the EVM execution receipt status.
+      // GenLayer requires checking validator consensus finality (finalized status), whereas
+      // standard EVM receipt status fields only reflect local execution success (e.g. 0x1).
+      const res = await callRpc('gen_getTransactionStatus', [{ txId: hash }]);
+      if (res) {
         return {
-          status: tx.status ?? (tx.blockHash ? 'FINALIZED' : 'PENDING'),
-          blockHash: tx.blockHash,
-          blockNumber: tx.blockNumber,
-          transactionHash: tx.hash || hash,
+          status: res.status,
+          transactionHash: hash,
         };
       }
-
       return null;
     });
   });
