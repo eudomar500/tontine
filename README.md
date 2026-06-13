@@ -26,10 +26,6 @@ Resolution runs through GenLayer's optimistic-democracy consensus. Once the reso
 
 A resolution is not final the instant it is decided. GenLayer first marks it accepted, which is provisional and can still be overturned during an appeal window, and only later finalized, which is immutable. Tontine gates winnings on finality: the claim is offered only once the resolution transaction reaches finalized, never on accepted. This prevents a participant from claiming against a result that an appeal could still change. While the resolution is accepted but not yet finalized, the pool reads as settled but the claim stays locked until finality lands.
 
-## Reputation
-
-Each wallet carries an on-chain reputation derived from its history of completed and refunded pools. It is computed on demand from the wallet's record rather than stored as a running balance, so there is nothing to keep in sync and no off-chain indexer involved.
-
 ## Security
 
 The contract is built to fail safe and to keep funds recoverable even if the operator disappears:
