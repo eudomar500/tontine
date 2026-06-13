@@ -4,7 +4,7 @@ Private peer-to-peer agreement pools on GenLayer, resolved by an LLM oracle over
 
 ## What it is
 
-Tontine lets a creator open a private pool, invite a fixed set of wallets, and define an event with an objective outcome that can be checked against public web sources. Participants stake native GEN on the outcome they expect. After the event, the pool is resolved by GenLayer's LLM consensus reading the declared sources, and the winning side splits the pot pro-rata to each stake.
+Tontine lets a creator open a private pool, invite a fixed set of wallets, and define an event with an objective outcome that can be checked against public web sources. An event can carry between two and ten possible outcomes, not just a binary yes or no, so a pool can frame questions with several distinct results, such as which option occurs or which range a value falls into. Participants stake native GEN on the outcome they expect. After the event, the pool is resolved by GenLayer's LLM consensus reading the declared sources, and the winning side splits the pot pro-rata to each stake.
 
 Pools are private by whitelist: only invited wallets can join. Everything else is public. There is no confidentiality layer and the project does not promise anonymity. Wallets and amounts are visible on-chain, in line with how Polymarket and Augur work.
 
