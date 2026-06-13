@@ -5,7 +5,7 @@ import { X, Plus, Trash2, Loader2, AlertCircle, CheckCircle2, ExternalLink, Help
 import { useWalletStore } from '../store/wallet';
 import { useContractWrite } from '../hooks/useContractWrite';
 import ConfirmModal from './ConfirmModal';
-import { getCreationFee, hexToBytes, CONTRACT_ADDRESS, weiToGen } from '../services/contract';
+import { getCreationFee, hexToBytes, CONTRACT_ADDRESS, weiToGen, CATEGORIES } from '../services/contract';
 import { CalldataAddress } from 'genlayer-js/types';
 import { usePoolsStore } from '../store/pools';
 
@@ -392,7 +392,7 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
           BigInt(joinOffset),
           BigInt(resolutionOffset),
           creatorOutcomeIndex,
-          category.trim(),
+          (category || 'Other').trim(),
         ],
         value: totalValueWei,
       });
@@ -1115,22 +1115,27 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
                       </div>
                     </div>
 
-                    {/* Category Selection input */}
+                    {/* Category Selection select dropdown */}
                     <div className="space-y-2">
                       <label className="text-[10px] uppercase font-bold tracking-widest text-foreground/45 block">
                         Category (Optional)
                       </label>
-                      <input
-                        type="text"
-                        placeholder="e.g. Sports, Politics, Tech, Pop Culture..."
+                      <select
                         value={category}
                         onChange={(e) => {
                           setCategory(e.target.value);
                           setValidationError(null);
                         }}
-                        className="w-full px-3.5 py-2.5 bg-charcoal-dark border border-charcoal-light focus:border-foreground/15 rounded-xl text-xs text-foreground focus:outline-none transition-colors placeholder-foreground/20"
-                        maxLength={500}
-                      />
+                        className="w-full px-3.5 py-2.5 bg-charcoal-dark border border-charcoal-light focus:border-foreground/15 rounded-xl text-xs text-foreground focus:outline-none transition-colors cursor-pointer"
+                      >
+                        <option value="" className="text-foreground/30 bg-charcoal-medium">Select a category...</option>
+                        {CATEGORIES.map((cat) => (
+                          <option key={cat} value={cat} className="text-foreground bg-charcoal-medium">
+                            {cat}
+                          </option>
+                        ))}
+                        <option value="Other" className="text-foreground bg-charcoal-medium">Other</option>
+                      </select>
                     </div>
                   </>
                 )}

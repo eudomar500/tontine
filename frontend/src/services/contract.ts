@@ -3,6 +3,7 @@ import { CalldataAddress } from 'genlayer-js/types';
 import { testnetBradbury } from 'genlayer-js/chains';
 import { rpcQueue, withRateLimitRetry } from './rpc';
 export const CONTRACT_ADDRESS = '0xB59455b38F9D3f39ccccF7d48e949aaa1b7eCCd2';
+export const CATEGORIES = ['Crypto', 'Sports', 'Politics', 'Weather', 'Tech'] as const;
 const client = createClient({ chain: testnetBradbury });
 
 export interface PoolSummary {
@@ -238,4 +239,24 @@ export async function getCreationFee(): Promise<bigint> {
     })
   );
 }
+
+/**
+ * Fetches the list of pool IDs where a wallet address has staked.
+ * Since the user might be checking their own participations, this serves as
+ * the database reference for client-side matching.
+ */
+export async function getWalletPools(wallet: string): Promise<number[]> {
+  const calldataAddr = new CalldataAddress(hexToBytes(wallet));
+  return rpcQueue.enqueue(() =>
+    withRateLimitRetry(async () => {
+      const res = await client.readContract({
+        address: CONTRACT_ADDRESS,
+        functionName: 'get_wallet_pools',
+        args: [calldataAddr],
+      });
+      return (res as unknown as Array<number | bigint | string>).map(Number);
+    })
+  );
+}
+
 

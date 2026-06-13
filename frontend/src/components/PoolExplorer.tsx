@@ -7,6 +7,7 @@ import PoolCard from './PoolCard';
 import PoolDetailDrawer from './PoolDetailDrawer';
 import CreatePoolModal from './CreatePoolModal';
 import { useTxStore } from '../store/transactions';
+import { useWalletStore } from '../store/wallet';
 
 export default function PoolExplorer() {
   const pools = usePoolsStore(selectFilteredPools);
@@ -18,6 +19,13 @@ export default function PoolExplorer() {
   const isLoading = usePoolsStore((state) => state.isLoading);
   const error = usePoolsStore((state) => state.error);
   const loadPools = usePoolsStore((state) => state.loadPools);
+  const viewMode = usePoolsStore((state) => state.viewMode);
+  const setViewMode = usePoolsStore((state) => state.setViewMode);
+  const loadMyPools = usePoolsStore((state) => state.loadMyPools);
+  const myPoolsLoading = usePoolsStore((state) => state.myPoolsLoading);
+
+  const connectedAddress = useWalletStore((state) => state.connectedAddress);
+  const setWalletModalOpen = useWalletStore((state) => state.setModalOpen);
 
   const [activeIndex, setActiveIndex] = useState(0);
   const [isMobile, setIsMobile] = useState(false);
@@ -46,6 +54,13 @@ export default function PoolExplorer() {
   useEffect(() => {
     loadPools();
   }, [loadPools]);
+
+  // Load user-specific pools when wallet connects or view mode switches to 'mine'
+  useEffect(() => {
+    if (viewMode === 'mine' && connectedAddress) {
+      loadMyPools(connectedAddress);
+    }
+  }, [viewMode, connectedAddress, loadMyPools]);
 
   // Reset active index when category changes to start from the first card
   useEffect(() => {
@@ -140,7 +155,7 @@ export default function PoolExplorer() {
   };
 
   // Skeletons during loading
-  if (isLoading) {
+  if (isLoading || (viewMode === 'mine' && myPoolsLoading)) {
     return (
       <div className="w-full max-w-sm sm:max-w-md mx-auto p-6 sm:p-7 h-[460px] bg-charcoal-medium/40 dark:bg-charcoal-medium/20 border border-charcoal-light/30 rounded-2xl animate-pulse flex flex-col justify-between">
         <div className="flex items-center justify-between">
@@ -198,6 +213,38 @@ export default function PoolExplorer() {
       {/* Category tabs navigation and Create Pool Trigger */}
       <div className="flex flex-col md:flex-row items-center justify-between w-full max-w-4xl gap-4 mb-12 px-4">
         <div className="flex flex-wrap items-center justify-center md:justify-start gap-2">
+          {/* View Mode Toggle: Single My Pools toggle pill */}
+          <button
+            onClick={() => {
+              const nextMode = viewMode === 'mine' ? 'all' : 'mine';
+              setViewMode(nextMode);
+              if (nextMode === 'mine' && connectedAddress) {
+                loadMyPools(connectedAddress);
+              }
+            }}
+            className={`px-4 py-2 text-xs font-semibold tracking-wider uppercase border transition-all duration-200 cursor-pointer ${
+              viewMode === 'mine'
+                ? 'relative rounded-full overflow-hidden bg-charcoal-medium/75 border-brand-magenta/40 text-brand-magenta'
+                : 'rounded-xl bg-charcoal-medium/40 hover:bg-charcoal-medium border-charcoal-light/30 text-foreground/60 hover:text-foreground'
+            }`}
+          >
+            My Pools
+            {viewMode === 'mine' && (
+              <div 
+                className="border-beam-container" 
+                style={{
+                  '--border-beam-width': '1.5px',
+                  '--border-beam-dark-opacity': '0.45',
+                  '--border-beam-light-opacity': '0.25',
+                } as React.CSSProperties}
+              />
+            )}
+          </button>
+
+
+          {/* Separator element matches the styling guidelines without hardcoding assets */}
+          <div className="w-[1px] h-6 bg-charcoal-light/20 mx-2 hidden md:block" />
+
           {categories.map((cat) => {
             const isActive = selectedCategory === cat;
             return (
@@ -234,14 +281,42 @@ export default function PoolExplorer() {
           )}
           <button
             onClick={() => setIsCreateModalOpen(true)}
-            className="px-5 py-2 flex items-center gap-1.5 bg-brand-gold hover:bg-brand-gold/90 text-charcoal-dark text-xs font-bold rounded-xl transition-all cursor-pointer font-display tracking-wider uppercase shadow-md shrink-0"
+            className="relative overflow-hidden px-5 py-2 flex items-center gap-1.5 bg-brand-gold/10 hover:bg-brand-gold/20 border border-brand-gold/30 text-brand-gold text-xs font-bold rounded-xl transition-all cursor-pointer font-display tracking-wider uppercase shadow-md shrink-0"
           >
             Create Pool
+            <div 
+              className="border-beam-container" 
+              style={{
+                '--border-beam-width': '1.5px',
+                '--border-beam-dark-opacity': '0.45',
+                '--border-beam-light-opacity': '0.25',
+              } as React.CSSProperties}
+            />
           </button>
         </div>
       </div>
 
-      {unfilteredPools.length === 0 ? (
+      {viewMode === 'mine' && !connectedAddress ? (
+        <div className="w-full max-w-md mx-auto p-10 bg-charcoal-medium/30 border border-charcoal-light/30 rounded-2xl text-center shadow-lg animate-fade-in">
+          <div className="flex justify-center mb-5">
+            <div className="p-3 bg-charcoal-light/30 rounded-full text-foreground/50 border border-charcoal-light/50">
+              <HelpCircle className="w-6 h-6" />
+            </div>
+          </div>
+          <h4 className="text-lg font-bold text-foreground mb-2">
+            Wallet Not Connected
+          </h4>
+          <p className="text-sm text-foreground/50 leading-relaxed font-light mb-6">
+            Please connect your wallet to view agreements you created or joined.
+          </p>
+          <button
+            onClick={() => setWalletModalOpen(true)}
+            className="px-5 py-2.5 bg-brand-gold hover:bg-brand-gold/90 text-charcoal-dark text-xs font-bold rounded-xl transition-all cursor-pointer font-display tracking-wider uppercase shadow-md mx-auto"
+          >
+            Connect Wallet
+          </button>
+        </div>
+      ) : unfilteredPools.length === 0 ? (
         // Empty state handling
         <div className="w-full max-w-md mx-auto p-10 bg-charcoal-medium/30 border border-charcoal-light/30 rounded-2xl text-center shadow-lg animate-fade-in">
           <div className="flex justify-center mb-5">
@@ -280,17 +355,28 @@ export default function PoolExplorer() {
             </div>
           </div>
           <h4 className="text-lg font-bold text-foreground mb-2">
-            No Pools in Category
+            {viewMode === 'mine' ? 'No Agreements Found' : 'No Pools in Category'}
           </h4>
           <p className="text-sm text-foreground/50 leading-relaxed font-light mb-6">
-            There are currently no active prediction pools in the "{selectedCategory}" category.
+            {viewMode === 'mine'
+              ? 'You have not created or participated in any pools yet.'
+              : `There are currently no active prediction pools in the "${selectedCategory}" category.`}
           </p>
-          <button
-            onClick={() => setSelectedCategory(categories[0] || 'All')}
-            className="px-5 py-2.5 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light rounded-xl text-sm font-semibold text-foreground transition-all cursor-pointer"
-          >
-            Show All
-          </button>
+          {viewMode === 'mine' ? (
+            <button
+              onClick={() => setViewMode('all')}
+              className="px-5 py-2.5 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light rounded-xl text-sm font-semibold text-foreground transition-all cursor-pointer mx-auto"
+            >
+              Show All Pools
+            </button>
+          ) : (
+            <button
+              onClick={() => setSelectedCategory(categories[0] || 'All')}
+              className="px-5 py-2.5 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light rounded-xl text-sm font-semibold text-foreground transition-all cursor-pointer mx-auto"
+            >
+              Show All
+            </button>
+          )}
         </div>
       ) : (
         <>
