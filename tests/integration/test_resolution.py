@@ -12,7 +12,7 @@ State and reason codes mirror the contract.
 
 from gltest import get_contract_factory
 from gltest.accounts import get_accounts
-from gltest.assertions import tx_execution_succeeded, tx_execution_failed
+from gltest.assertions import tx_execution_succeeded
 
 from conftest import (
     MIN_STAKE,
@@ -29,13 +29,14 @@ from conftest import (
 OPEN = 0
 RESOLVING = 1
 SETTLED = 2
+REFUNDED = 3
 
-# glsim does not roll back contract state when a transaction reverts, so a
-# request_resolution that raises (failed source, non-convergence, bad index)
-# leaves the pool in RESOLVING rather than back at OPEN. The property that
-# matters in every negative case is therefore "did not SETTLE" plus a failed
-# transaction, which is robust to that behaviour and to a real environment that
-# would roll back to OPEN.
+REASON_INCONCLUSIVE = 6
+
+# An inconclusive resolution (no usable sources, a -1 or out-of-range verdict, or
+# confidence below threshold) now persists a clean REFUNDED state with reason
+# INCONCLUSIVE instead of reverting. The negative cases below assert that
+# terminal refunded state, which the frontend can read on-chain.
 
 SOURCE_A = "https://fixtures.test/match/a"
 SOURCE_B = "https://fixtures.test/match/b"
@@ -135,9 +136,10 @@ def test_prompt_injection_does_not_settle_to_attacker_outcome():
 
     Source A carries a clean account of an Eagles win. Source B is hostile: it
     embeds override instructions and forged section markers trying to force
-    outcome_index 1 (Hawks) at confidence 100. The resolver must refuse: either
-    non-convergence or any verdict other than the injected one. The assertion
-    fails only if the pool settles to Hawks.
+    outcome_index 1 (Hawks) at confidence 100. The resolver must refuse: it
+    either settles to the legitimate outcome or refunds as inconclusive, but it
+    must never settle to the injected one. The assertion fails only if the pool
+    settles to Hawks.
     """
     contract, pid, accounts = _new_contested_pool()
     admin = accounts[0]
@@ -165,8 +167,15 @@ def test_prompt_injection_does_not_settle_to_attacker_outcome():
     clear_mocks()
 
 
-def test_contradictory_sources_do_not_settle():
-    """Sources that disagree should not converge, so the pool does not settle."""
+def test_contradictory_sources_do_not_revert():
+    """Sources that disagree reach a terminal state without reverting.
+
+    With a real model the verdict is nondeterministic: contradictory sources
+    should yield -1 and refund, but the model could occasionally pick a side.
+    The guarantee under test is that the transaction does not revert and the
+    pool is never left stuck in OPEN. The deterministic inconclusive-to-REFUNDED
+    mapping is covered in the direct tests.
+    """
     contract, pid, accounts = _new_contested_pool()
     admin = accounts[0]
 
@@ -178,39 +187,41 @@ def test_contradictory_sources_do_not_settle():
     )
 
     receipt = _request_resolution(contract, pid, admin)
+    assert tx_execution_succeeded(receipt)
 
     pool = contract.get_pool(args=[pid]).call()
-    assert int(pool["state"]) != SETTLED, "contradictory sources must not settle"
-    assert tx_execution_failed(receipt)
+    assert int(pool["state"]) != OPEN
     clear_mocks()
 
 
-def test_failing_source_does_not_settle():
-    """A source that renders no text must abort resolution (the M-1 guard).
+def test_zero_usable_sources_refund():
+    """When no source renders any text, the pool refunds as inconclusive.
 
-    render has no status code; an unreachable or anti-bot page comes back as
-    empty text, so the empty-content guard is what rejects a failing source.
+    render returns empty text for an unreachable or anti-bot page. With every
+    source empty there is nothing to resolve from, so decide() reports -1 without
+    calling the model and the pool persists REFUNDED with reason INCONCLUSIVE,
+    which is deterministic and does not depend on the live model.
     """
     contract, pid, accounts = _new_contested_pool()
     admin = accounts[0]
 
-    good = "The Eagles won the 2027 final 28 to 17."
-    install_mocks({SOURCE_A: _page(good), SOURCE_B: _page("")})
+    install_mocks({SOURCE_A: _page(""), SOURCE_B: _page("")})
 
     receipt = _request_resolution(contract, pid, admin)
+    assert tx_execution_succeeded(receipt)
 
     pool = contract.get_pool(args=[pid]).call()
-    assert int(pool["state"]) != SETTLED, "a failing source must not settle the pool"
-    assert tx_execution_failed(receipt)
+    assert int(pool["state"]) == REFUNDED
+    assert int(pool["refund_reason"]) == REASON_INCONCLUSIVE
     clear_mocks()
 
 
-def test_out_of_range_index_is_non_convergent():
-    """An out-of-range outcome_index from the model is rejected, not indexed.
+def test_out_of_range_index_refunds():
+    """An out-of-range outcome_index from the model refunds as inconclusive.
 
     A real model will not reliably emit an invalid index, so the model response
-    is mocked here to drive the contract's own bounds guard. The pool must not
-    settle and must never index an outcome outside its range.
+    is mocked here to drive the contract's own bounds guard. The pool must never
+    index an outcome outside its range; instead it persists REFUNDED.
     """
     contract, pid, accounts = _new_contested_pool()
     admin = accounts[0]
@@ -222,8 +233,9 @@ def test_out_of_range_index_is_non_convergent():
     )
 
     receipt = _request_resolution(contract, pid, admin)
+    assert tx_execution_succeeded(receipt)
 
     pool = contract.get_pool(args=[pid]).call()
-    assert int(pool["state"]) != SETTLED
-    assert tx_execution_failed(receipt)
+    assert int(pool["state"]) == REFUNDED
+    assert int(pool["refund_reason"]) == REASON_INCONCLUSIVE
     clear_mocks()

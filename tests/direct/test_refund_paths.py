@@ -1,5 +1,7 @@
 """Resolution outcomes that send a pool to REFUNDED rather than SETTLED."""
 
+import json
+
 from conftest import (
     MIN_STAKE,
     HOUR,
@@ -10,9 +12,31 @@ from conftest import (
     to_iso,
 )
 
+SETTLED = 2
 REFUNDED = 3
 REASON_NOBODY_WON = 3
 REASON_NO_REAL_CONTEST = 4
+REASON_INCONCLUSIVE = 6
+
+
+def _contested(contract, direct_vm, alice, bob):
+    """Open a real contest and advance past the resolution deadline.
+
+    Creator backs outcome 0 and a second wallet backs outcome 1, so two outcomes
+    are funded and the resolver path runs rather than the NO_REAL_CONTEST short
+    circuit.
+    """
+    pid = create_pool(
+        contract,
+        direct_vm,
+        alice,
+        whitelist=[alice, bob],
+        outcome_labels=["home", "away"],
+        creator_outcome_index=0,
+    )
+    join(contract, direct_vm, bob, pid, 1, MIN_STAKE)
+    direct_vm.warp(to_iso(BASE_EPOCH + 2 * HOUR + 1))
+    return pid
 
 
 def test_no_real_contest_refunds_without_llm(direct_vm, deploy, alice, bob):
@@ -70,3 +94,88 @@ def test_nobody_won_refunds(direct_vm, deploy, alice, bob):
     pool = contract.get_pool(pid)
     assert int(pool.state) == REFUNDED
     assert int(pool.refund_reason) == REASON_NOBODY_WON
+
+
+def test_partial_sources_resolve(direct_vm, deploy, alice, bob):
+    """An empty source is skipped and the resolution proceeds from the rest.
+
+    One source renders no text and the other returns usable content. The empty
+    one is dropped instead of failing the whole resolution, and the verdict drawn
+    from the remaining source settles the pool.
+    """
+    contract = deploy()
+    pid = _contested(contract, direct_vm, alice, bob)
+
+    direct_vm.mock_web(r"https://ex\.com/a", {"status": 200, "body": ""})
+    direct_vm.mock_web(r"https://ex\.com/b", {"status": 200, "body": "home won the match"})
+    direct_vm.mock_llm(
+        r"impartial resolver",
+        json.dumps({"outcome_index": 0, "confidence": 90, "evidence": "home won"}),
+    )
+    direct_vm.sender = alice
+    contract.request_resolution(pid)
+
+    pool = contract.get_pool(pid)
+    assert int(pool.state) == SETTLED
+    assert int(pool.winning_outcome_index) == 0
+
+
+def test_zero_usable_sources_refund(direct_vm, deploy, alice, bob):
+    """When every source renders empty, the pool refunds as inconclusive.
+
+    No LLM mock is registered: with no usable content decide() reports -1 without
+    prompting the model, so the resolution refunds instead of reverting.
+    """
+    contract = deploy()
+    pid = _contested(contract, direct_vm, alice, bob)
+
+    direct_vm.mock_web(r"https://ex\.com/a", {"status": 200, "body": ""})
+    direct_vm.mock_web(r"https://ex\.com/b", {"status": 200, "body": ""})
+    direct_vm.sender = alice
+    contract.request_resolution(pid)
+
+    pool = contract.get_pool(pid)
+    assert int(pool.state) == REFUNDED
+    assert int(pool.refund_reason) == REASON_INCONCLUSIVE
+
+
+def test_inconclusive_verdict_refunds(direct_vm, deploy, alice, bob):
+    """A -1 verdict from the resolver refunds as inconclusive instead of reverting."""
+    contract = deploy()
+    pid = _contested(contract, direct_vm, alice, bob)
+
+    mock_resolution(direct_vm, outcome_index=-1)
+    direct_vm.sender = alice
+    contract.request_resolution(pid)
+
+    pool = contract.get_pool(pid)
+    assert int(pool.state) == REFUNDED
+    assert int(pool.refund_reason) == REASON_INCONCLUSIVE
+
+
+def test_low_confidence_refunds(direct_vm, deploy, alice, bob):
+    """A verdict below the confidence threshold refunds as inconclusive."""
+    contract = deploy()
+    pid = _contested(contract, direct_vm, alice, bob)
+
+    mock_resolution(direct_vm, outcome_index=0, confidence=50)
+    direct_vm.sender = alice
+    contract.request_resolution(pid)
+
+    pool = contract.get_pool(pid)
+    assert int(pool.state) == REFUNDED
+    assert int(pool.refund_reason) == REASON_INCONCLUSIVE
+
+
+def test_out_of_range_index_refunds(direct_vm, deploy, alice, bob):
+    """An out-of-range index from the resolver refunds as inconclusive."""
+    contract = deploy()
+    pid = _contested(contract, direct_vm, alice, bob)
+
+    mock_resolution(direct_vm, outcome_index=99)
+    direct_vm.sender = alice
+    contract.request_resolution(pid)
+
+    pool = contract.get_pool(pid)
+    assert int(pool.state) == REFUNDED
+    assert int(pool.refund_reason) == REASON_INCONCLUSIVE

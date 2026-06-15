@@ -29,6 +29,7 @@ class RefundReason:
     NOBODY_WON = u8(3)
     NO_REAL_CONTEST = u8(4)
     BLOCKED_BY_ADMIN = u8(5)
+    INCONCLUSIVE = u8(6)
 
 
 @allow_storage
@@ -550,12 +551,17 @@ class Tontine(gl.Contract):
                 # render runs the page in a headless browser and returns its
                 # visible text, so modern JS pages resolve. Unlike web.get there
                 # is no status code: an unreachable or anti-bot page comes back as
-                # empty (or no) text, which is not evidence, so reject it.
-                # force_refund covers pools that never resolve.
+                # empty (or no) text. Skip such a source and resolve from whatever
+                # sources returned usable content, rather than aborting the whole
+                # resolution; the model's "-1 if insufficient" guard still applies.
                 content = gl.nondet.web.render(url, mode="text")
                 if content is None or len(content.strip()) == 0:
-                    raise gl.vm.UserError("source fetch failed")
+                    continue
                 contents.append(content[:MAX_FETCH_CHARS])
+            if len(contents) == 0:
+                # No source returned content. Report an inconclusive verdict so the
+                # outer handler refunds, instead of prompting the model with nothing.
+                return json.dumps({"outcome_index": -1, "confidence": 0, "evidence": "no usable sources"})
             joined = ""
             for i in range(len(contents)):
                 tag = "SOURCE " + str(i + 1)
@@ -608,11 +614,18 @@ class Tontine(gl.Contract):
         conf = decision.get("confidence", 0)
         evidence = decision.get("evidence", "")
 
-        # Guard against a hallucinated or out-of-range index from the model.
+        # An out-of-range or -1 index, or a verdict below the confidence
+        # threshold, means the oracle could not establish a single outcome.
+        # Persist that as a clean REFUNDED state the frontend can read on-chain,
+        # rather than reverting and leaving the pool stuck in OPEN with no trace.
         if not isinstance(idx, int) or idx < 0 or idx >= n_out:
-            raise gl.vm.UserError("non-convergent resolution")
+            pool.state = PoolState.REFUNDED
+            pool.refund_reason = RefundReason.INCONCLUSIVE
+            return
         if not isinstance(conf, int) or conf < CONFIDENCE_THRESHOLD:
-            raise gl.vm.UserError("non-convergent resolution")
+            pool.state = PoolState.REFUNDED
+            pool.refund_reason = RefundReason.INCONCLUSIVE
+            return
 
         # Winning outcome with no backers cannot pay out; refund everyone.
         if pool.outcomes[idx].total_staked == u256(0):
