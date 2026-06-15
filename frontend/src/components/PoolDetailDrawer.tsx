@@ -1371,63 +1371,78 @@ export default function PoolDetailDrawer() {
                   )
                 ) : pool.state === 3 ? (
                   // State 3: REFUNDED
-                  hasJoined ? (
-                    userStake.claimed ? (
-                      <div className="p-4 bg-foreground/5 border border-foreground/15 rounded-2xl flex items-center justify-center gap-2.5 text-xs text-foreground/80 font-semibold">
-                        <CheckCircle2 className="w-4 h-4 text-brand-gold" />
-                        <span>Refund Claimed</span>
-                      </div>
-                    ) : pendingClaimRefundTx ? (
-                      <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
-                        <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
-                          Claim Refund
-                        </span>
-                        <p className="text-xs text-foreground/60 leading-relaxed font-light">
-                          Refund claim requested, processing on Bradbury.
-                        </p>
-                        <div className="flex items-center gap-2">
+                  <div className="space-y-4">
+                    <div className="p-4 bg-charcoal-medium/10 border border-charcoal-light/15 rounded-2xl text-xs text-foreground/70 leading-relaxed font-light">
+                      <span className="font-semibold text-brand-gold uppercase tracking-wider block mb-1 text-[10px]">
+                        Refund Reason
+                      </span>
+                      {pool.refund_reason === 1 && 'This pool was cancelled by the creator.'}
+                      {pool.refund_reason === 2 && 'This pool timed out before it could be resolved, so all stakes are refundable.'}
+                      {pool.refund_reason === 3 && 'The outcome that occurred had no backers, so all stakes are refundable.'}
+                      {pool.refund_reason === 4 && 'Fewer than two outcomes had stake, so there was no real contest; all stakes are refundable.'}
+                      {pool.refund_reason === 5 && 'This pool was blocked and refunded by the administrator.'}
+                      {pool.refund_reason === 6 && 'The oracle could not reach a verdict from the listed sources, so all stakes are refundable.'}
+                      {(!pool.refund_reason || pool.refund_reason < 1 || pool.refund_reason > 6) && 'This pool has been refunded.'}
+                    </div>
+
+                    {hasJoined ? (
+                      userStake.claimed ? (
+                        <div className="p-4 bg-foreground/5 border border-foreground/15 rounded-2xl flex items-center justify-center gap-2.5 text-xs text-foreground/80 font-semibold">
+                          <CheckCircle2 className="w-4 h-4 text-brand-gold" />
+                          <span>Refund Claimed</span>
+                        </div>
+                      ) : pendingClaimRefundTx ? (
+                        <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
+                          <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
+                            Claim Refund
+                          </span>
+                          <p className="text-xs text-foreground/60 leading-relaxed font-light">
+                            Refund claim requested, processing on Bradbury.
+                          </p>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              disabled
+                              className="flex-1 py-3 bg-brand-gold/20 text-brand-gold/50 font-bold tracking-wide rounded-xl cursor-not-allowed text-sm flex items-center justify-center gap-2"
+                            >
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              Claim Pending
+                            </button>
+                            <a
+                              href={`https://explorer-bradbury.genlayer.com/tx/${pendingClaimRefundTx.hash}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="p-3 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light rounded-xl text-foreground/75 hover:text-foreground transition-all cursor-pointer"
+                              title="View transaction on explorer"
+                            >
+                              <ExternalLink className="w-4 h-4" />
+                            </a>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
+                          <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
+                            Claim Refund
+                          </span>
+                          <div className="space-y-1">
+                            <span className="text-[10px] uppercase font-bold tracking-widest text-foreground/40 block">Refundable Amount</span>
+                            <span className="text-lg font-bold text-brand-gold block">{weiToGen(userStake.amount)} GEN</span>
+                          </div>
                           <button
                             type="button"
-                            disabled
-                            className="flex-1 py-3 bg-brand-gold/20 text-brand-gold/50 font-bold tracking-wide rounded-xl cursor-not-allowed text-sm flex items-center justify-center gap-2"
+                            onClick={handleClaimRefundClick}
+                            className="w-full py-3 bg-brand-gold hover:bg-brand-gold/90 text-charcoal-dark font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm"
                           >
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                            Claim Pending
+                            Claim Refund
                           </button>
-                          <a
-                            href={`https://explorer-bradbury.genlayer.com/tx/${pendingClaimRefundTx.hash}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="p-3 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light rounded-xl text-foreground/75 hover:text-foreground transition-all cursor-pointer"
-                            title="View transaction on explorer"
-                          >
-                            <ExternalLink className="w-4 h-4" />
-                          </a>
                         </div>
-                      </div>
+                      )
                     ) : (
-                      <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
-                        <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
-                          Claim Refund
-                        </span>
-                        <div className="space-y-1">
-                          <span className="text-[10px] uppercase font-bold tracking-widest text-foreground/40 block">Refundable Amount</span>
-                          <span className="text-lg font-bold text-brand-gold block">{weiToGen(userStake.amount)} GEN</span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={handleClaimRefundClick}
-                          className="w-full py-3 bg-brand-gold hover:bg-brand-gold/90 text-charcoal-dark font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm"
-                        >
-                          Claim Refund
-                        </button>
+                      <div className="p-4 bg-charcoal-medium/10 border border-charcoal-light/15 rounded-2xl text-xs text-foreground/50 text-center font-light leading-relaxed">
+                        This pool has been refunded. You did not participate in this agreement.
                       </div>
-                    )
-                  ) : (
-                    <div className="p-4 bg-charcoal-medium/10 border border-charcoal-light/15 rounded-2xl text-xs text-foreground/50 text-center font-light leading-relaxed">
-                      This pool has been refunded. You did not participate in this agreement.
-                    </div>
-                  )
+                    )}
+                  </div>
                 ) : (
                   // State 4: EMERGENCY or default
                   <div className="p-4 bg-charcoal-medium/10 border border-charcoal-light/15 rounded-2xl text-xs text-foreground/50 text-center font-light leading-relaxed">
