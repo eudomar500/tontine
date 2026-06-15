@@ -25,7 +25,7 @@ export function useContractWrite(options?: UseContractWriteOptions) {
     async (params: {
       address: string;
       functionName: string;
-      args: any[];
+      args?: any[];
       value?: bigint;
       poolId?: number;
     }) => {
@@ -49,12 +49,16 @@ export function useContractWrite(options?: UseContractWriteOptions) {
           provider: connectedProvider.provider,
         });
 
-        const hash = await client.writeContract({
+        const writeParams: any = {
           address: params.address as `0x${string}`,
           functionName: params.functionName,
-          args: params.args,
           value: params.value ?? 0n,
-        });
+        };
+        if (params.args !== undefined) {
+          writeParams.args = params.args;
+        }
+
+        const hash = await client.writeContract(writeParams);
         hashRef = hash;
 
         setTxHash(hash);

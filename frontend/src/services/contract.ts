@@ -259,4 +259,73 @@ export async function getWalletPools(wallet: string): Promise<number[]> {
   );
 }
 
+export interface AdminState {
+  admin: string;
+  pending_admin: string;
+  admin_transfer_deadline: number;
+  fee_collector: string;
+  pending_fee_collector: string;
+  pending_fee_collector_deadline: number;
+  creation_fee: string;
+  pending_creation_fee: string;
+  pending_creation_fee_deadline: number;
+  paused: boolean;
+  killswitch_active: boolean;
+  killswitch_activated_at: number;
+  last_admin_heartbeat: number;
+}
+
+export interface KillswitchStatus {
+  active: boolean;
+  activated_at: number;
+  window_ends_at: number;
+  can_deactivate: boolean;
+  dead_man_triggers_at: number;
+}
+
+/**
+ * Fetches the current admin state from the contract.
+ */
+export async function getAdminState(): Promise<AdminState> {
+  return rpcQueue.enqueue(() =>
+    withRateLimitRetry(async () => {
+      const res = await client.readContract({
+        address: CONTRACT_ADDRESS,
+        functionName: 'get_admin_state',
+      });
+      return res as unknown as AdminState;
+    })
+  );
+}
+
+/**
+ * Fetches the current killswitch status from the contract.
+ */
+export async function getKillswitchStatus(): Promise<KillswitchStatus> {
+  return rpcQueue.enqueue(() =>
+    withRateLimitRetry(async () => {
+      const res = await client.readContract({
+        address: CONTRACT_ADDRESS,
+        functionName: 'get_killswitch_status',
+      });
+      return res as unknown as KillswitchStatus;
+    })
+  );
+}
+
+/**
+ * Fetches the total accumulated fees in the contract.
+ */
+export async function getAccumulatedFees(): Promise<bigint> {
+  return rpcQueue.enqueue(() =>
+    withRateLimitRetry(async () => {
+      const res = await client.readContract({
+        address: CONTRACT_ADDRESS,
+        functionName: 'get_accumulated_fees',
+      });
+      return BigInt(res as string | number | bigint);
+    })
+  );
+}
+
 

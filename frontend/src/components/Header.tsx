@@ -6,10 +6,12 @@ import Avatar from 'boring-avatars';
 import { Copy, Check, ExternalLink, Wallet, Sun, Moon } from 'lucide-react';
 import { useWalletStore } from '../store/wallet';
 import { useThemeStore } from '../store/theme';
+import { useAdminStore } from '../store/admin';
 
 export default function Header() {
   const { connectedAddress, setModalOpen, disconnectWallet, initializeDiscovery } = useWalletStore();
   const { theme, toggleTheme } = useThemeStore();
+  const { adminState, loadAdminData } = useAdminStore();
   const [copied, setCopied] = useState(false);
 
   // Initialize EIP-6963 discovery
@@ -17,6 +19,16 @@ export default function Header() {
     const cleanup = initializeDiscovery();
     return cleanup;
   }, [initializeDiscovery]);
+
+  // Load administrative configurations to verify access level
+  useEffect(() => {
+    loadAdminData();
+  }, [loadAdminData]);
+
+  const isAdmin =
+    connectedAddress &&
+    adminState &&
+    adminState.admin.toLowerCase() === connectedAddress.toLowerCase();
 
   const handleCopy = async () => {
     if (!connectedAddress) return;
@@ -47,13 +59,21 @@ export default function Header() {
           />
         </a>
 
-        <nav className="hidden sm:flex items-center">
+        <nav className="hidden sm:flex items-center gap-6">
           <a
-            href="#explore"
+            href="/#explore"
             className="text-sm font-semibold tracking-wide text-foreground/50 hover:text-foreground transition-all duration-200"
           >
             Explore
           </a>
+          {isAdmin && (
+            <a
+              href="/admin"
+              className="text-sm font-semibold tracking-wide text-foreground/50 hover:text-foreground transition-all duration-200"
+            >
+              Admin
+            </a>
+          )}
         </nav>
       </div>
 
