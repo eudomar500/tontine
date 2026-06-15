@@ -65,20 +65,27 @@ export default function PoolDetailDrawer() {
   const [isStakeChecked, setIsStakeChecked] = useState<boolean>(false);
   const [activeAction, setActiveAction] = useState<'join' | 'increase' | 'resolve' | 'claim' | 'force_refund' | 'claim_refund' | 'cancel' | null>(null);
 
+  const [isReconciled, setIsReconciled] = useState<boolean>(false);
+  const [isReconciling, setIsReconciling] = useState<boolean>(false);
+
   const [localMarker, setLocalMarker] = useState<{ txHash: string; timestamp: number } | null>(null);
   const [forceRefundMarker, setForceRefundMarker] = useState<{ txHash: string; timestamp: number } | null>(null);
   const [claimRefundMarker, setClaimRefundMarker] = useState<{ txHash: string; timestamp: number } | null>(null);
 
-  const pendingTxFromStore = pool
+  const pendingTxFromStore = pool && localMarker
     ? transactions.find(
         (tx) =>
-          tx.poolId === pool.pool_id &&
-          tx.action === 'request_resolution' &&
+          tx.hash === localMarker.txHash &&
           tx.status !== 'finalized'
       )
     : undefined;
 
   const pendingResolutionTx = pendingTxFromStore || (localMarker ? { hash: localMarker.txHash } : undefined);
+
+  // Find the resolution transaction to evaluate finalization status
+  const resolutionTx = pool && localMarker
+    ? transactions.find((tx) => tx.hash === localMarker.txHash)
+    : undefined;
 
   const pendingForceRefundTxFromStore = pool
     ? transactions.find(
@@ -106,16 +113,22 @@ export default function PoolDetailDrawer() {
   const connectedAddress = useWalletStore((state) => state.connectedAddress);
   const setWalletModalOpen = useWalletStore((state) => state.setModalOpen);
 
-  const fetchPoolDetail = useCallback(async (id: number) => {
-    setIsLoading(true);
+  const fetchPoolDetail = useCallback(async (id: number, onComplete?: () => void) => {
+    const isSilent = !!onComplete;
+    if (!isSilent) {
+      setIsLoading(true);
+    }
     setError(null);
     try {
       const detail = await getPool(id);
       setPool(detail);
+      onComplete?.();
     } catch (err: any) {
       setError(err?.message || 'Failed to retrieve pool details.');
     } finally {
-      setIsLoading(false);
+      if (!isSilent) {
+        setIsLoading(false);
+      }
     }
   }, []);
 
@@ -211,7 +224,29 @@ export default function PoolDetailDrawer() {
     resetWrite();
     setUserStake(null);
     setActiveAction(null);
+    setIsReconciled(false);
+    setIsReconciling(false);
   }, [selectedPoolId, resetWrite]);
+
+  // Synchronize on-chain details once the current resolution transaction is finalized.
+  // The reconciled flag prevents false failure flashes during the read latency window.
+  useEffect(() => {
+    if (resolutionTx?.status !== 'finalized') {
+      setIsReconciled(false);
+      setIsReconciling(false);
+      return;
+    }
+
+    if (!isReconciled && !isReconciling) {
+      setIsReconciling(true);
+      if (selectedPoolId) {
+        fetchPoolDetail(selectedPoolId, () => {
+          setIsReconciled(true);
+          setIsReconciling(false);
+        });
+      }
+    }
+  }, [resolutionTx?.status, isReconciled, isReconciling, selectedPoolId, fetchPoolDetail]);
 
   // Sync localStorage markers on mount/pool/wallet change
   useEffect(() => {
@@ -350,7 +385,7 @@ export default function PoolDetailDrawer() {
 
   // Sync resolution tx from local storage back into the transaction store on page load / mount
   useEffect(() => {
-    if (!pool || pool.state !== 2) return;
+    if (!pool) return;
     if (localMarker && !transactions.some((tx) => tx.hash === localMarker.txHash)) {
       addTransaction(localMarker.txHash, false, pool.pool_id, 'request_resolution');
     }
@@ -422,6 +457,13 @@ export default function PoolDetailDrawer() {
 
   const canCancel = isOpen && isCreator && participantCount === 1;
 
+  // Reconcile finalized transaction status against the on-chain pool state to evaluate failure.
+  const isResolutionFailed =
+    resolutionTx?.status === 'finalized' &&
+    isOpen &&
+    isReconciled &&
+    !isReconciling;
+
   const hasJoined = userStake !== null;
 
   // Estimate winnings payout: share = (stake * total_pool) / winning_pool
@@ -440,15 +482,6 @@ export default function PoolDetailDrawer() {
       // Ignore calculation errors
     }
   }
-
-  // Find the resolution transaction to evaluate finalization status
-  const resolutionTx = pool
-    ? transactions.find(
-        (tx) =>
-          tx.poolId === pool.pool_id &&
-          tx.action === 'request_resolution'
-      )
-    : undefined;
 
   // Safety default: only allow claiming if finalization is positively confirmed
   const isFinalized = resolutionTx?.status === 'finalized';
@@ -941,7 +974,53 @@ export default function PoolDetailDrawer() {
                   </div>
                 ) : pool.state === 0 ? (
                   // State 0: OPEN
-                  isTimeout ? (
+                  isResolutionFailed ? (
+                    <div className="space-y-4 bg-brand-magenta/5 border border-brand-magenta/15 rounded-2xl p-4.5">
+                      <span className="text-xs font-semibold text-brand-magenta tracking-widest uppercase flex items-center gap-1.5">
+                        <AlertCircle className="w-4 h-4 shrink-0" />
+                        Resolution Failed
+                      </span>
+                      <p className="text-xs text-foreground/75 leading-relaxed font-light">
+                        The previous resolution attempt finalized but failed. This typically indicates the oracle was unable to reach consensus from the listed verification sources.
+                      </p>
+                      
+                      <div className="flex flex-col gap-2">
+                        {/* Transaction tracker link */}
+                        <div className="text-[10px] font-mono text-foreground/50 truncate flex items-center justify-between bg-charcoal-dark/50 border border-charcoal-light/10 px-2.5 py-1.5 rounded-lg select-all">
+                          <span className="truncate">{resolutionTx?.hash || pendingResolutionTx?.hash}</span>
+                          <a
+                            href={`https://explorer-bradbury.genlayer.com/tx/${resolutionTx?.hash || pendingResolutionTx?.hash}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-foreground/40 hover:text-foreground transition-all ml-2 shrink-0"
+                            title="View failed transaction on explorer"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" />
+                          </a>
+                        </div>
+
+                        {isWhitelisted && (
+                          <button
+                            type="button"
+                            onClick={handleResolveClick}
+                            className="w-full py-3 bg-brand-gold hover:bg-brand-gold/90 text-charcoal-dark font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm"
+                          >
+                            Retry Resolution
+                          </button>
+                        )}
+
+                        {isTimeout && (
+                          <button
+                            type="button"
+                            onClick={handleForceRefundClick}
+                            className="w-full py-3 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light text-foreground/80 hover:text-foreground font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm"
+                          >
+                            Force Refund
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ) : isTimeout ? (
                     pendingForceRefundTx ? (
                       <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
                         <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
