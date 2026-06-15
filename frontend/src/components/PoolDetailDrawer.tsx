@@ -63,7 +63,7 @@ export default function PoolDetailDrawer() {
   const [userStake, setUserStake] = useState<Stake | null>(null);
   const [isStakeLoading, setIsStakeLoading] = useState<boolean>(false);
   const [isStakeChecked, setIsStakeChecked] = useState<boolean>(false);
-  const [activeAction, setActiveAction] = useState<'join' | 'increase' | 'resolve' | 'claim' | 'force_refund' | 'claim_refund' | null>(null);
+  const [activeAction, setActiveAction] = useState<'join' | 'increase' | 'resolve' | 'claim' | 'force_refund' | 'claim_refund' | 'cancel' | null>(null);
 
   const [localMarker, setLocalMarker] = useState<{ txHash: string; timestamp: number } | null>(null);
   const [forceRefundMarker, setForceRefundMarker] = useState<{ txHash: string; timestamp: number } | null>(null);
@@ -412,6 +412,16 @@ export default function PoolDetailDrawer() {
   const isResolutionReady = pool ? Math.floor(Date.now() / 1000) >= pool.resolution_deadline : false;
   const isTimeout = pool ? Math.floor(Date.now() / 1000) >= pool.timeout_deadline : false;
 
+  const isCreator = pool && connectedAddress
+    ? pool.creator.toLowerCase() === connectedAddress.toLowerCase()
+    : false;
+
+  const participantCount = pool
+    ? pool.outcomes.reduce((acc, curr) => acc + Number(curr.participants_count), 0)
+    : 0;
+
+  const canCancel = isOpen && isCreator && participantCount === 1;
+
   const hasJoined = userStake !== null;
 
   // Estimate winnings payout: share = (stake * total_pool) / winning_pool
@@ -517,6 +527,12 @@ export default function PoolDetailDrawer() {
     setIsConfirmOpen(true);
   };
 
+  const handleCancelClick = () => {
+    setValidationError(null);
+    setActiveAction('cancel');
+    setIsConfirmOpen(true);
+  };
+
   const handleConfirmAction = async () => {
     if (!pool) return;
     setIsConfirmOpen(false);
@@ -561,6 +577,13 @@ export default function PoolDetailDrawer() {
         await write({
           address: CONTRACT_ADDRESS,
           functionName: 'claim_refund',
+          args: [BigInt(pool.pool_id)],
+          poolId: pool.pool_id,
+        });
+      } else if (activeAction === 'cancel') {
+        await write({
+          address: CONTRACT_ADDRESS,
+          functionName: 'cancel_pool',
           args: [BigInt(pool.pool_id)],
           poolId: pool.pool_id,
         });
@@ -1187,6 +1210,16 @@ export default function PoolDetailDrawer() {
                       >
                         Increase Stake
                       </button>
+
+                      {canCancel && (
+                        <button
+                          type="button"
+                          onClick={handleCancelClick}
+                          className="w-full py-3 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light/30 text-foreground/80 hover:text-foreground font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm mt-2"
+                        >
+                          Cancel Pool
+                        </button>
+                      )}
                     </div>
                   )
                 ) : pool.state === 1 ? (
@@ -1425,6 +1458,8 @@ export default function PoolDetailDrawer() {
               ? 'Confirm Force Refund'
               : activeAction === 'claim_refund'
               ? 'Confirm Refund Claim'
+              : activeAction === 'cancel'
+              ? 'Confirm Cancel Pool'
               : 'Confirm Staking Action'
           }
         >
@@ -1516,6 +1551,26 @@ export default function PoolDetailDrawer() {
               </div>
               <p className="text-[11px] text-foreground/45 italic leading-snug">
                 Claiming is irreversible. Transactions on GenLayer Bradbury have a finality window of 25 to 40 minutes.
+              </p>
+            </div>
+          ) : activeAction === 'cancel' ? (
+            <div>
+              <p className="mb-3">Please review the details below before signing the transaction in your wallet:</p>
+              <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-2.5 mb-4">
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">Pool ID</span>
+                  <span className="font-semibold text-foreground font-mono">#{pool.pool_id}</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">Action</span>
+                  <span className="font-semibold text-brand-gold font-display uppercase font-bold text-sm">Cancel Pool</span>
+                </div>
+              </div>
+              <p className="text-xs text-foreground/75 mb-3 leading-relaxed">
+                This will cancel the agreement pool. The pool state will transition to Refunded, and you can recover your stake.
+              </p>
+              <p className="text-[11px] text-foreground/45 italic leading-snug">
+                Note: The creation fee is non-refundable. Transactions on GenLayer Bradbury have a finality window of 25 to 40 minutes.
               </p>
             </div>
           ) : (
