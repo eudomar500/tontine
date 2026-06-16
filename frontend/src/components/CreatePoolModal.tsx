@@ -8,6 +8,15 @@ import ConfirmModal from './ConfirmModal';
 import { getCreationFee, hexToBytes, CONTRACT_ADDRESS, weiToGen, CATEGORIES } from '../services/contract';
 import { CalldataAddress } from 'genlayer-js/types';
 import { usePoolsStore } from '../store/pools';
+import { CURATED_PRESETS } from '../services/presets';
+
+const WEATHER_CITIES: Record<string, { lat: string; lng: string; label: string }> = {
+  nyc: { label: 'New York', lat: '40.7128', lng: '-74.0060' },
+  london: { label: 'London', lat: '51.5074', lng: '-0.1278' },
+  tokyo: { label: 'Tokyo', lat: '35.6762', lng: '139.6503' },
+  paris: { label: 'Paris', lat: '48.8566', lng: '2.3522' },
+  custom: { label: 'Custom Coordinates...', lat: '', lng: '' },
+};
 
 /**
  * Parses GEN decimal string amount and converts it to a BigInt representation in wei units.
@@ -58,6 +67,38 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
   const [creatorOutcomeIndex, setCreatorOutcomeIndex] = useState<number>(0);
   const [creatorStake, setCreatorStake] = useState<string>('');
   const [category, setCategory] = useState<string>('');
+
+  // Weather source builder states
+  const [weatherApi, setWeatherApi] = useState<'open-meteo' | 'nws'>('open-meteo');
+  const [weatherCity, setWeatherCity] = useState<string>('nyc');
+  const [weatherLat, setWeatherLat] = useState<string>('40.7128');
+  const [weatherLng, setWeatherLng] = useState<string>('-74.0060');
+  const [weatherMetric, setWeatherMetric] = useState<string>('temperature_2m');
+  const [weatherStation, setWeatherStation] = useState<string>('KNYC');
+
+  const handleAddPreset = (url: string) => {
+    const cleanUrl = url.trim();
+    const isDuplicate = sources.some((s) => s.trim().toLowerCase() === cleanUrl.toLowerCase());
+    if (isDuplicate) {
+      setValidationError('This source URL is already added to the list');
+      return;
+    }
+
+    setValidationError(null);
+
+    const emptyIndex = sources.findIndex((s) => !s.trim());
+    if (emptyIndex !== -1) {
+      setSources((prev) => {
+        const updated = [...prev];
+        updated[emptyIndex] = cleanUrl;
+        return updated;
+      });
+    } else if (sources.length < 5) {
+      setSources((prev) => [...prev, cleanUrl]);
+    } else {
+      setValidationError('Maximum of 5 verification sources allowed. Remove or edit an existing URL to add this preset.');
+    }
+  };
 
   // UI state
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -136,6 +177,12 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
     setCreatorOutcomeIndex(0);
     setCreatorStake('');
     setCategory('');
+    setWeatherApi('open-meteo');
+    setWeatherCity('nyc');
+    setWeatherLat('40.7128');
+    setWeatherLng('-74.0060');
+    setWeatherMetric('temperature_2m');
+    setWeatherStation('KNYC');
     setValidationError(null);
     setValidationWarning(null);
     setIsConfirmOpen(false);
@@ -834,6 +881,225 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
                       )}
                     </div>
 
+                    {/* Category Selection select dropdown */}
+                    <div className="space-y-2">
+                      <label className="text-[10px] uppercase font-bold tracking-widest text-foreground/45 block">
+                        Category (Optional)
+                      </label>
+                      <select
+                        value={category}
+                        onChange={(e) => {
+                          setCategory(e.target.value);
+                          setValidationError(null);
+                        }}
+                        className="w-full px-3.5 py-2.5 bg-charcoal-dark border border-charcoal-light focus:border-foreground/15 rounded-xl text-xs text-foreground focus:outline-none transition-colors cursor-pointer"
+                      >
+                        <option value="" className="text-foreground/30 bg-charcoal-medium">Select a category...</option>
+                        {CATEGORIES.map((cat) => (
+                          <option key={cat} value={cat} className="text-foreground bg-charcoal-medium">
+                            {cat}
+                          </option>
+                        ))}
+                        <option value="Other" className="text-foreground bg-charcoal-medium">Other</option>
+                      </select>
+                    </div>
+
+                    {/* Curated Presets & Hints section */}
+                    {category === 'Crypto' && (
+                      <div className="bg-charcoal-dark/20 border border-charcoal-light/30 rounded-2xl p-4.5 space-y-3.5">
+                        <span className="text-[10px] uppercase font-bold tracking-widest text-brand-gold block">
+                          Curated Crypto Sources
+                        </span>
+                        <div className="flex flex-wrap gap-2.5">
+                          {CURATED_PRESETS.Crypto.map((preset) => (
+                            <button
+                              key={preset.label}
+                              type="button"
+                              onClick={() => handleAddPreset(preset.url)}
+                              className="px-3.5 py-2 bg-charcoal-dark hover:bg-charcoal-light border border-charcoal-light/35 rounded-xl text-xs font-semibold text-foreground/85 hover:text-foreground transition-all cursor-pointer shadow-sm text-left truncate max-w-xs"
+                            >
+                              {preset.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {category === 'Weather' && (
+                      <div className="bg-charcoal-dark/20 border border-charcoal-light/30 rounded-2xl p-4.5 space-y-4">
+                        <div className="flex justify-between items-center">
+                          <span className="text-[10px] uppercase font-bold tracking-widest text-brand-gold">
+                            Weather Source Builder
+                          </span>
+                          <span className="text-[9px] text-foreground/45">
+                            Generates verified public APIs
+                          </span>
+                        </div>
+
+                        {/* Weather Builder Fields */}
+                        <div className="space-y-3.5">
+                          <div className="grid grid-cols-2 gap-3">
+                            {/* Weather API Selector */}
+                            <div className="space-y-1.5">
+                              <label className="text-[9px] uppercase font-bold tracking-wider text-foreground/45 block">
+                                API Provider
+                              </label>
+                              <div className="flex gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setWeatherApi('open-meteo')}
+                                  className={`flex-1 py-2 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                                    weatherApi === 'open-meteo'
+                                      ? 'bg-brand-gold text-charcoal-dark border-brand-gold'
+                                      : 'bg-charcoal-dark/50 border-charcoal-light/30 text-foreground/60 hover:text-foreground'
+                                  }`}
+                                >
+                                  Open-Meteo
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setWeatherApi('nws')}
+                                  className={`flex-1 py-2 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                                    weatherApi === 'nws'
+                                      ? 'bg-brand-gold text-charcoal-dark border-brand-gold'
+                                      : 'bg-charcoal-dark/50 border-charcoal-light/30 text-foreground/60 hover:text-foreground'
+                                  }`}
+                                >
+                                  NWS (US)
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Conditional inputs */}
+                            {weatherApi === 'open-meteo' ? (
+                              <div className="space-y-1.5">
+                                <label className="text-[9px] uppercase font-bold tracking-wider text-foreground/45 block">
+                                  Location / City
+                                </label>
+                                <select
+                                  value={weatherCity}
+                                  onChange={(e) => {
+                                    const city = e.target.value;
+                                    setWeatherCity(city);
+                                    if (city !== 'custom') {
+                                      setWeatherLat(WEATHER_CITIES[city].lat);
+                                      setWeatherLng(WEATHER_CITIES[city].lng);
+                                    }
+                                  }}
+                                  className="w-full px-3 py-2 bg-charcoal-dark border border-charcoal-light rounded-lg text-xs text-foreground/80 focus:outline-none transition-colors cursor-pointer"
+                                >
+                                  {Object.entries(WEATHER_CITIES).map(([key, val]) => (
+                                    <option key={key} value={key} className="text-foreground bg-charcoal-medium">
+                                      {val.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            ) : (
+                              <div className="space-y-1.5">
+                                <label className="text-[9px] uppercase font-bold tracking-wider text-foreground/45 block">
+                                  US Station Code
+                                </label>
+                                <input
+                                  type="text"
+                                  placeholder="e.g. KNYC"
+                                  value={weatherStation}
+                                  onChange={(e) => setWeatherStation(e.target.value.toUpperCase())}
+                                  className="w-full px-3 py-2 bg-charcoal-dark border border-charcoal-light focus:border-foreground/15 rounded-lg text-xs text-foreground focus:outline-none transition-colors font-mono uppercase font-semibold"
+                                />
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Coordinates inputs for custom coordinates in Open-Meteo */}
+                          {weatherApi === 'open-meteo' && (
+                            <div className="space-y-3">
+                              {weatherCity === 'custom' && (
+                                <div className="grid grid-cols-2 gap-3">
+                                  <div className="space-y-1">
+                                    <label className="text-[9px] uppercase font-bold tracking-wider text-foreground/45 block">
+                                      Latitude
+                                    </label>
+                                    <input
+                                      type="number"
+                                      step="0.0001"
+                                      placeholder="e.g. 40.7128"
+                                      value={weatherLat}
+                                      onChange={(e) => setWeatherLat(e.target.value)}
+                                      className="w-full px-3 py-2 bg-charcoal-dark border border-charcoal-light focus:border-foreground/15 rounded-lg text-xs text-foreground focus:outline-none transition-colors"
+                                    />
+                                  </div>
+                                  <div className="space-y-1">
+                                    <label className="text-[9px] uppercase font-bold tracking-wider text-foreground/45 block">
+                                      Longitude
+                                    </label>
+                                    <input
+                                      type="number"
+                                      step="0.0001"
+                                      placeholder="e.g. -74.0060"
+                                      value={weatherLng}
+                                      onChange={(e) => setWeatherLng(e.target.value)}
+                                      className="w-full px-3 py-2 bg-charcoal-dark border border-charcoal-light focus:border-foreground/15 rounded-lg text-xs text-foreground focus:outline-none transition-colors"
+                                    />
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Metric Selector */}
+                              <div className="space-y-1.5">
+                                <label className="text-[9px] uppercase font-bold tracking-wider text-foreground/45 block">
+                                  Weather Metric
+                                </label>
+                                <select
+                                  value={weatherMetric}
+                                  onChange={(e) => setWeatherMetric(e.target.value)}
+                                  className="w-full px-3 py-2 bg-charcoal-dark border border-charcoal-light rounded-lg text-xs text-foreground/80 focus:outline-none transition-colors cursor-pointer"
+                                >
+                                  <option value="temperature_2m" className="text-foreground bg-charcoal-medium">Temperature (temperature_2m)</option>
+                                  <option value="precipitation" className="text-foreground bg-charcoal-medium">Precipitation (precipitation)</option>
+                                  <option value="wind_speed_10m" className="text-foreground bg-charcoal-medium">Wind Speed (wind_speed_10m)</option>
+                                </select>
+                              </div>
+                            </div>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (weatherApi === 'open-meteo') {
+                                const lat = weatherLat.trim();
+                                const lng = weatherLng.trim();
+                                if (!lat || !lng || isNaN(parseFloat(lat)) || isNaN(parseFloat(lng))) {
+                                  setValidationError('Valid coordinates are required to build Open-Meteo URL');
+                                  return;
+                                }
+                                handleAddPreset(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=${weatherMetric}`);
+                              } else {
+                                const station = weatherStation.trim();
+                                if (!station) {
+                                  setValidationError('NWS Station code is required');
+                                  return;
+                                }
+                                handleAddPreset(`https://api.weather.gov/stations/${station}/observations/latest`);
+                              }
+                            }}
+                            className="w-full py-2 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light text-xs font-semibold text-foreground rounded-xl transition-all cursor-pointer shadow-sm"
+                          >
+                            Add Generated Weather URL
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {category !== '' && category !== 'Crypto' && category !== 'Weather' && (
+                      <div className="p-4 bg-charcoal-medium/10 border border-charcoal-light/15 rounded-xl flex items-start gap-3 text-xs text-foreground/50 leading-relaxed font-light">
+                        <HelpCircle className="w-4 h-4 text-foreground/45 shrink-0 mt-0.5" />
+                        <span>
+                          No presets are currently verified for this category. Please provide 2 to 5 distinct, public HTTPS URLs. Prefer machine-readable API endpoints (JSON/CSV) that can be read directly by the consensus oracle without relying on a full browser window.
+                        </span>
+                      </div>
+                    )}
+
                     {/* Resolution Web Sources list */}
                     <div className="space-y-3">
                       <div className="flex justify-between items-center">
@@ -1115,28 +1381,7 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
                       </div>
                     </div>
 
-                    {/* Category Selection select dropdown */}
-                    <div className="space-y-2">
-                      <label className="text-[10px] uppercase font-bold tracking-widest text-foreground/45 block">
-                        Category (Optional)
-                      </label>
-                      <select
-                        value={category}
-                        onChange={(e) => {
-                          setCategory(e.target.value);
-                          setValidationError(null);
-                        }}
-                        className="w-full px-3.5 py-2.5 bg-charcoal-dark border border-charcoal-light focus:border-foreground/15 rounded-xl text-xs text-foreground focus:outline-none transition-colors cursor-pointer"
-                      >
-                        <option value="" className="text-foreground/30 bg-charcoal-medium">Select a category...</option>
-                        {CATEGORIES.map((cat) => (
-                          <option key={cat} value={cat} className="text-foreground bg-charcoal-medium">
-                            {cat}
-                          </option>
-                        ))}
-                        <option value="Other" className="text-foreground bg-charcoal-medium">Other</option>
-                      </select>
-                    </div>
+
                   </>
                 )}
               </div>
