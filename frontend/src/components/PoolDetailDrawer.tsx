@@ -137,6 +137,18 @@ export default function PoolDetailDrawer() {
     ? transactions.find((tx) => tx.hash === claimWinningsMarker.txHash)
     : undefined;
 
+  const isClaimFailed =
+    claimWinningsTx?.status === 'finalized' &&
+    !userStake?.claimed &&
+    isClaimReconciled &&
+    !isClaimReconciling;
+
+  const isClaimRefundFailed =
+    claimRefundTx?.status === 'finalized' &&
+    !userStake?.claimed &&
+    isClaimRefundReconciled &&
+    !isClaimRefundReconciling;
+
   // Wallet and custom write hook setup
   const connectedAddress = useWalletStore((state) => state.connectedAddress);
   const setWalletModalOpen = useWalletStore((state) => state.setModalOpen);
@@ -321,6 +333,78 @@ export default function PoolDetailDrawer() {
       }
     }
   }, [claimRefundTx?.status, isClaimRefundReconciled, isClaimRefundReconciling, selectedPoolId, connectedAddress, fetchPoolDetail, fetchUserStake]);
+
+  // Reactive polling while claim winnings or claim refund transactions are pending.
+  // This ensures self-healing if wallet switching or page refreshes disrupt transaction tracking,
+  // and terminates on success, tracked terminal failure, or TTL expiration.
+  const poolRef = React.useRef(pool);
+  useEffect(() => {
+    poolRef.current = pool;
+  }, [pool]);
+
+  useEffect(() => {
+    if (!selectedPoolId || !connectedAddress || (!claimWinningsMarker && !claimRefundMarker)) {
+      return;
+    }
+
+    const interval = setInterval(async () => {
+      const now = Date.now();
+      const fallbackExpiryMs = 60 * 60 * 1000; // 60 minutes
+      const currentPool = poolRef.current;
+      const expiryTimeMs = currentPool ? currentPool.timeout_deadline * 1000 : 0;
+
+      // 1. Handle Claim Winnings Marker
+      if (claimWinningsMarker) {
+        const hasExpired = (expiryTimeMs > 0 && now > expiryTimeMs) || (now - claimWinningsMarker.timestamp) > fallbackExpiryMs;
+        if (hasExpired) {
+          const claimWinningsKey = `tontine:claimWinningsRequested:${selectedPoolId}:${connectedAddress.toLowerCase()}`;
+          if (typeof window !== 'undefined') {
+            localStorage.removeItem(claimWinningsKey);
+          }
+          setClaimWinningsMarker(null);
+          return;
+        }
+
+        if (isClaimFailed) {
+          return; // Stop requesting if transaction failed explicitly
+        }
+
+        await fetchUserStake(selectedPoolId, connectedAddress);
+        await fetchPoolDetail(selectedPoolId);
+      }
+
+      // 2. Handle Claim Refund Marker
+      if (claimRefundMarker) {
+        const hasExpired = (expiryTimeMs > 0 && now > expiryTimeMs) || (now - claimRefundMarker.timestamp) > fallbackExpiryMs;
+        if (hasExpired) {
+          const claimRefundKey = `tontine:claimRefundRequested:${selectedPoolId}:${connectedAddress.toLowerCase()}`;
+          if (typeof window !== 'undefined') {
+            localStorage.removeItem(claimRefundKey);
+          }
+          setClaimRefundMarker(null);
+          return;
+        }
+
+        if (isClaimRefundFailed) {
+          return; // Stop requesting if transaction failed explicitly
+        }
+
+        await fetchUserStake(selectedPoolId, connectedAddress);
+        await fetchPoolDetail(selectedPoolId);
+      }
+    }, 30000); // 30 seconds interval
+
+    return () => clearInterval(interval);
+  }, [
+    selectedPoolId,
+    connectedAddress,
+    claimWinningsMarker,
+    claimRefundMarker,
+    isClaimFailed,
+    isClaimRefundFailed,
+    fetchUserStake,
+    fetchPoolDetail,
+  ]);
 
   // Sync localStorage markers on mount/pool/wallet change
   useEffect(() => {
@@ -590,18 +674,6 @@ export default function PoolDetailDrawer() {
     isOpen &&
     isReconciled &&
     !isReconciling;
-
-  const isClaimFailed =
-    claimWinningsTx?.status === 'finalized' &&
-    !userStake?.claimed &&
-    isClaimReconciled &&
-    !isClaimReconciling;
-
-  const isClaimRefundFailed =
-    claimRefundTx?.status === 'finalized' &&
-    !userStake?.claimed &&
-    isClaimRefundReconciled &&
-    !isClaimRefundReconciling;
 
   const hasJoined = userStake !== null;
 
