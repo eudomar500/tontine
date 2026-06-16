@@ -179,3 +179,68 @@ def test_out_of_range_index_refunds(direct_vm, deploy, alice, bob):
     pool = contract.get_pool(pid)
     assert int(pool.state) == REFUNDED
     assert int(pool.refund_reason) == REASON_INCONCLUSIVE
+
+
+def test_raising_source_skipped_resolves(direct_vm, deploy, alice, bob):
+    """A source whose render raises is skipped, and a good source still settles.
+
+    In direct mode an unmocked URL makes web.render raise, which stands in for a
+    walled page that throws inside the headless render. The first source raises
+    and is dropped; the second returns content and drives the verdict.
+    """
+    contract = deploy()
+    pid = _contested(contract, direct_vm, alice, bob)
+
+    # /a is left unmocked so its render raises; /b returns usable content.
+    direct_vm.mock_web(r"https://ex\.com/b", {"status": 200, "body": "home won the match"})
+    direct_vm.mock_llm(
+        r"impartial resolver",
+        json.dumps({"outcome_index": 0, "confidence": 90, "evidence": "home won"}),
+    )
+    direct_vm.sender = alice
+    contract.request_resolution(pid)
+
+    pool = contract.get_pool(pid)
+    assert int(pool.state) == SETTLED
+    assert int(pool.winning_outcome_index) == 0
+
+
+def test_all_sources_raise_refund(direct_vm, deploy, alice, bob):
+    """When every source render raises, the pool refunds as inconclusive.
+
+    Both URLs are unmocked so both renders raise. With no usable content decide()
+    reports -1 without prompting the model, so the resolution refunds rather than
+    finalizing with an execution error.
+    """
+    contract = deploy()
+    pid = _contested(contract, direct_vm, alice, bob)
+
+    direct_vm.sender = alice
+    contract.request_resolution(pid)
+
+    pool = contract.get_pool(pid)
+    assert int(pool.state) == REFUNDED
+    assert int(pool.refund_reason) == REASON_INCONCLUSIVE
+
+
+def test_good_source_with_one_raising_resolves(direct_vm, deploy, alice, bob):
+    """A good first source still settles when a later source raises.
+
+    Order independence: the first source returns content and the second raises
+    and is dropped, so the verdict comes from the first.
+    """
+    contract = deploy()
+    pid = _contested(contract, direct_vm, alice, bob)
+
+    # /a returns content; /b is left unmocked so its render raises.
+    direct_vm.mock_web(r"https://ex\.com/a", {"status": 200, "body": "home won the match"})
+    direct_vm.mock_llm(
+        r"impartial resolver",
+        json.dumps({"outcome_index": 0, "confidence": 90, "evidence": "home won"}),
+    )
+    direct_vm.sender = alice
+    contract.request_resolution(pid)
+
+    pool = contract.get_pool(pid)
+    assert int(pool.state) == SETTLED
+    assert int(pool.winning_outcome_index) == 0

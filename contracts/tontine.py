@@ -549,12 +549,16 @@ class Tontine(gl.Contract):
             contents = []
             for url in sources:
                 # render runs the page in a headless browser and returns its
-                # visible text, so modern JS pages resolve. Unlike web.get there
-                # is no status code: an unreachable or anti-bot page comes back as
-                # empty (or no) text. Skip such a source and resolve from whatever
-                # sources returned usable content, rather than aborting the whole
-                # resolution; the model's "-1 if insufficient" guard still applies.
-                content = gl.nondet.web.render(url, mode="text")
+                # visible text, so modern JS pages resolve. An unreachable or
+                # anti-bot page (for example a Cloudflare challenge) can either
+                # return empty text or raise inside the render. Skip that source
+                # either way and resolve from whatever sources returned usable
+                # content, rather than aborting the whole resolution; the model's
+                # "-1 if insufficient" guard still applies.
+                try:
+                    content = gl.nondet.web.render(url, mode="text")
+                except Exception:
+                    continue
                 if content is None or len(content.strip()) == 0:
                     continue
                 contents.append(content[:MAX_FETCH_CHARS])
