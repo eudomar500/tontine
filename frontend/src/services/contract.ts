@@ -2,7 +2,7 @@ import { createClient } from 'genlayer-js';
 import { CalldataAddress } from 'genlayer-js/types';
 import { testnetBradbury } from 'genlayer-js/chains';
 import { rpcQueue, withRateLimitRetry } from './rpc';
-export const CONTRACT_ADDRESS = '0xEb8208A946fCd510f8028E87C810Ea453A30aDAd';
+export const CONTRACT_ADDRESS = '0x2F83ECA1974432BEc3192f6a1cC0e015dD4bC118';
 export const CATEGORIES = ['Crypto', 'Sports', 'Politics', 'Weather', 'Tech'] as const;
 const client = createClient({ chain: testnetBradbury });
 
