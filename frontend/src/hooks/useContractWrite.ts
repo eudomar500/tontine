@@ -76,6 +76,8 @@ export function useContractWrite(options?: UseContractWriteOptions) {
               localStorage.setItem(`tontine:forceRefundRequested:${params.poolId}`, JSON.stringify({ txHash: hash, timestamp: Date.now() }));
             } else if (params.functionName === 'claim_refund' && connectedAddress) {
               localStorage.setItem(`tontine:claimRefundRequested:${params.poolId}:${connectedAddress.toLowerCase()}`, JSON.stringify({ txHash: hash, timestamp: Date.now() }));
+            } else if (params.functionName === 'claim_winnings' && connectedAddress) {
+              localStorage.setItem(`tontine:claimWinningsRequested:${params.poolId}:${connectedAddress.toLowerCase()}`, JSON.stringify({ txHash: hash, timestamp: Date.now() }));
             }
           }
         }
@@ -159,6 +161,8 @@ export function useContractWrite(options?: UseContractWriteOptions) {
               localStorage.removeItem(`tontine:forceRefundRequested:${params.poolId}`);
             } else if (params.functionName === 'claim_refund' && connectedAddress) {
               localStorage.removeItem(`tontine:claimRefundRequested:${params.poolId}:${connectedAddress.toLowerCase()}`);
+            } else if (params.functionName === 'claim_winnings' && connectedAddress) {
+              localStorage.removeItem(`tontine:claimWinningsRequested:${params.poolId}:${connectedAddress.toLowerCase()}`);
             }
           }
         }

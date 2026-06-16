@@ -68,9 +68,16 @@ export default function PoolDetailDrawer() {
   const [isReconciled, setIsReconciled] = useState<boolean>(false);
   const [isReconciling, setIsReconciling] = useState<boolean>(false);
 
+  const [isClaimReconciled, setIsClaimReconciled] = useState<boolean>(false);
+  const [isClaimReconciling, setIsClaimReconciling] = useState<boolean>(false);
+
+  const [isClaimRefundReconciled, setIsClaimRefundReconciled] = useState<boolean>(false);
+  const [isClaimRefundReconciling, setIsClaimRefundReconciling] = useState<boolean>(false);
+
   const [localMarker, setLocalMarker] = useState<{ txHash: string; timestamp: number } | null>(null);
   const [forceRefundMarker, setForceRefundMarker] = useState<{ txHash: string; timestamp: number } | null>(null);
   const [claimRefundMarker, setClaimRefundMarker] = useState<{ txHash: string; timestamp: number } | null>(null);
+  const [claimWinningsMarker, setClaimWinningsMarker] = useState<{ txHash: string; timestamp: number } | null>(null);
 
   const pendingTxFromStore = pool && localMarker
     ? transactions.find(
@@ -108,6 +115,27 @@ export default function PoolDetailDrawer() {
     : undefined;
 
   const pendingClaimRefundTx = pendingClaimRefundTxFromStore || (claimRefundMarker ? { hash: claimRefundMarker.txHash } : undefined);
+
+  // Find the claim refund transaction to evaluate finalization status
+  const claimRefundTx = pool && claimRefundMarker
+    ? transactions.find((tx) => tx.hash === claimRefundMarker.txHash)
+    : undefined;
+
+  const pendingClaimWinningsTxFromStore = pool
+    ? transactions.find(
+        (tx) =>
+          tx.poolId === pool.pool_id &&
+          tx.action === 'claim_winnings' &&
+          tx.status !== 'finalized'
+      )
+    : undefined;
+
+  const pendingClaimWinningsTx = pendingClaimWinningsTxFromStore || (claimWinningsMarker ? { hash: claimWinningsMarker.txHash } : undefined);
+
+  // Find the claim winnings transaction to evaluate finalization status
+  const claimWinningsTx = pool && claimWinningsMarker
+    ? transactions.find((tx) => tx.hash === claimWinningsMarker.txHash)
+    : undefined;
 
   // Wallet and custom write hook setup
   const connectedAddress = useWalletStore((state) => state.connectedAddress);
@@ -226,6 +254,10 @@ export default function PoolDetailDrawer() {
     setActiveAction(null);
     setIsReconciled(false);
     setIsReconciling(false);
+    setIsClaimReconciled(false);
+    setIsClaimReconciling(false);
+    setIsClaimRefundReconciled(false);
+    setIsClaimRefundReconciling(false);
   }, [selectedPoolId, resetWrite]);
 
   // Synchronize on-chain details once the current resolution transaction is finalized.
@@ -248,12 +280,55 @@ export default function PoolDetailDrawer() {
     }
   }, [resolutionTx?.status, isReconciled, isReconciling, selectedPoolId, fetchPoolDetail]);
 
+  // Synchronize details once the claim winnings transaction is finalized on-chain.
+  useEffect(() => {
+    if (claimWinningsTx?.status !== 'finalized') {
+      setIsClaimReconciled(false);
+      setIsClaimReconciling(false);
+      return;
+    }
+
+    if (!isClaimReconciled && !isClaimReconciling) {
+      setIsClaimReconciling(true);
+      if (selectedPoolId && connectedAddress) {
+        fetchPoolDetail(selectedPoolId, () => {
+          fetchUserStake(selectedPoolId, connectedAddress).then(() => {
+            setIsClaimReconciled(true);
+            setIsClaimReconciling(false);
+          });
+        });
+      }
+    }
+  }, [claimWinningsTx?.status, isClaimReconciled, isClaimReconciling, selectedPoolId, connectedAddress, fetchPoolDetail, fetchUserStake]);
+
+  // Synchronize details once the claim refund transaction is finalized on-chain.
+  useEffect(() => {
+    if (claimRefundTx?.status !== 'finalized') {
+      setIsClaimRefundReconciled(false);
+      setIsClaimRefundReconciling(false);
+      return;
+    }
+
+    if (!isClaimRefundReconciled && !isClaimRefundReconciling) {
+      setIsClaimRefundReconciling(true);
+      if (selectedPoolId && connectedAddress) {
+        fetchPoolDetail(selectedPoolId, () => {
+          fetchUserStake(selectedPoolId, connectedAddress).then(() => {
+            setIsClaimRefundReconciled(true);
+            setIsClaimRefundReconciling(false);
+          });
+        });
+      }
+    }
+  }, [claimRefundTx?.status, isClaimRefundReconciled, isClaimRefundReconciling, selectedPoolId, connectedAddress, fetchPoolDetail, fetchUserStake]);
+
   // Sync localStorage markers on mount/pool/wallet change
   useEffect(() => {
     if (typeof window === 'undefined' || !pool) {
       setLocalMarker(null);
       setForceRefundMarker(null);
       setClaimRefundMarker(null);
+      setClaimWinningsMarker(null);
       return;
     }
 
@@ -321,6 +396,29 @@ export default function PoolDetailDrawer() {
     } else {
       setClaimRefundMarker(null);
     }
+
+    // 4. Claim Winnings marker
+    if (connectedAddress) {
+      const claimWinningsKey = `tontine:claimWinningsRequested:${pool.pool_id}:${connectedAddress.toLowerCase()}`;
+      const claimWinningsStored = localStorage.getItem(claimWinningsKey);
+      if (claimWinningsStored) {
+        try {
+          const parsed = JSON.parse(claimWinningsStored);
+          if (now > expiryTimeMs || (now - parsed.timestamp) > fallbackExpiryMs) {
+            localStorage.removeItem(claimWinningsKey);
+            setClaimWinningsMarker(null);
+          } else {
+            setClaimWinningsMarker(parsed);
+          }
+        } catch (e) {
+          setClaimWinningsMarker(null);
+        }
+      } else {
+        setClaimWinningsMarker(null);
+      }
+    } else {
+      setClaimWinningsMarker(null);
+    }
   }, [pool, connectedAddress, transactions]);
 
   // Clear pending resolution/refund txs from store if pool has transitioned or action is completed
@@ -352,6 +450,19 @@ export default function PoolDetailDrawer() {
         }
         setLocalMarker(null);
       }
+    }
+
+    if (pool.state === 2 && userStake?.claimed) {
+      const pendingClaim = transactions.find(
+        (tx) => tx.poolId === pool.pool_id && tx.action === 'claim_winnings'
+      );
+      if (pendingClaim) {
+        removeTransaction(pendingClaim.hash);
+      }
+      if (typeof window !== 'undefined' && connectedAddress) {
+        localStorage.removeItem(`tontine:claimWinningsRequested:${pool.pool_id}:${connectedAddress.toLowerCase()}`);
+      }
+      setClaimWinningsMarker(null);
     }
 
     if (pool.state === 3) {
@@ -391,10 +502,26 @@ export default function PoolDetailDrawer() {
     }
   }, [pool, localMarker, transactions, addTransaction]);
 
+  // Sync claim refund tx from local storage back into the transaction store on page load / mount
+  useEffect(() => {
+    if (!pool) return;
+    if (claimRefundMarker && !transactions.some((tx) => tx.hash === claimRefundMarker.txHash)) {
+      addTransaction(claimRefundMarker.txHash, false, pool.pool_id, 'claim_refund');
+    }
+  }, [pool, claimRefundMarker, transactions, addTransaction]);
+
+  // Sync claim winnings tx from local storage back into the transaction store on page load / mount
+  useEffect(() => {
+    if (!pool) return;
+    if (claimWinningsMarker && !transactions.some((tx) => tx.hash === claimWinningsMarker.txHash)) {
+      addTransaction(claimWinningsMarker.txHash, false, pool.pool_id, 'claim_winnings');
+    }
+  }, [pool, claimWinningsMarker, transactions, addTransaction]);
+
   // Automatically dismiss the local write state for resolution and refund actions once the transaction is broadcast.
   // This allows the UI to transition reactively to the dedicated pending/resolving pool views.
   useEffect(() => {
-    if (writeStatus === 'pending' && (activeAction === 'resolve' || activeAction === 'force_refund' || activeAction === 'claim_refund')) {
+    if (writeStatus === 'pending' && (activeAction === 'resolve' || activeAction === 'force_refund' || activeAction === 'claim_refund' || activeAction === 'claim')) {
       resetWrite();
       setActiveAction(null);
     }
@@ -463,6 +590,18 @@ export default function PoolDetailDrawer() {
     isOpen &&
     isReconciled &&
     !isReconciling;
+
+  const isClaimFailed =
+    claimWinningsTx?.status === 'finalized' &&
+    !userStake?.claimed &&
+    isClaimReconciled &&
+    !isClaimReconciling;
+
+  const isClaimRefundFailed =
+    claimRefundTx?.status === 'finalized' &&
+    !userStake?.claimed &&
+    isClaimRefundReconciled &&
+    !isClaimRefundReconciling;
 
   const hasJoined = userStake !== null;
 
@@ -598,6 +737,7 @@ export default function PoolDetailDrawer() {
           address: CONTRACT_ADDRESS,
           functionName: 'claim_winnings',
           args: [BigInt(pool.pool_id)],
+          poolId: pool.pool_id,
         });
       } else if (activeAction === 'force_refund') {
         await write({
@@ -1320,6 +1460,67 @@ export default function PoolDetailDrawer() {
                           <CheckCircle2 className="w-4 h-4 text-brand-gold" />
                           <span>Winnings Claimed</span>
                         </div>
+                      ) : isClaimFailed ? (
+                        // Claim Failed Notification
+                        <div className="space-y-4 bg-brand-magenta/5 border border-brand-magenta/15 rounded-2xl p-4.5">
+                          <span className="text-xs font-semibold text-brand-magenta tracking-widest uppercase flex items-center gap-1.5">
+                            <AlertCircle className="w-4 h-4 shrink-0" />
+                            Claim Failed
+                          </span>
+                          <p className="text-xs text-foreground/75 leading-relaxed font-light">
+                            The claim transaction finalized but the winnings were not claimed. This can happen if the transaction reverted.
+                          </p>
+                          <div className="flex flex-col gap-2">
+                            <div className="text-[10px] font-mono text-foreground/50 truncate flex items-center justify-between bg-charcoal-dark/50 border border-charcoal-light/10 px-2.5 py-1.5 rounded-lg select-all">
+                              <span className="truncate">{claimWinningsTx?.hash || pendingClaimWinningsTx?.hash}</span>
+                              <a
+                                href={`https://explorer-bradbury.genlayer.com/tx/${claimWinningsTx?.hash || pendingClaimWinningsTx?.hash}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-foreground/40 hover:text-foreground transition-all ml-2 shrink-0"
+                                title="View failed transaction on explorer"
+                              >
+                                <ExternalLink className="w-3.5 h-3.5" />
+                              </a>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={handleClaimClick}
+                              className="w-full py-3 bg-brand-gold hover:bg-brand-gold/90 text-charcoal-dark font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm"
+                            >
+                              Retry Claim
+                            </button>
+                          </div>
+                        </div>
+                      ) : (pendingClaimWinningsTx && !userStake.claimed) ? (
+                        // Claim Pending (Processing State)
+                        <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
+                          <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
+                            Claim Winnings
+                          </span>
+                          <p className="text-xs text-foreground/60 leading-relaxed font-light">
+                            Claim requested, processing on Bradbury.
+                          </p>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              disabled
+                              className="flex-1 py-3 bg-brand-gold/20 text-brand-gold/50 font-bold tracking-wide rounded-xl cursor-not-allowed text-sm flex items-center justify-center gap-2"
+                            >
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              Claim Pending
+                            </button>
+                            <a
+                              href={`https://explorer-bradbury.genlayer.com/tx/${pendingClaimWinningsTx.hash}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="p-3 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light rounded-xl text-foreground/75 hover:text-foreground transition-all cursor-pointer"
+                              title="View transaction on explorer"
+                            >
+                              <ExternalLink className="w-4 h-4" />
+                            </a>
+                          </div>
+                        </div>
                       ) : isFinalized ? (
                         // Claim Action Panel
                         <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
@@ -1391,7 +1592,39 @@ export default function PoolDetailDrawer() {
                           <CheckCircle2 className="w-4 h-4 text-brand-gold" />
                           <span>Refund Claimed</span>
                         </div>
-                      ) : pendingClaimRefundTx ? (
+                      ) : isClaimRefundFailed ? (
+                        // Refund Claim Failed Notification
+                        <div className="space-y-4 bg-brand-magenta/5 border border-brand-magenta/15 rounded-2xl p-4.5">
+                          <span className="text-xs font-semibold text-brand-magenta tracking-widest uppercase flex items-center gap-1.5">
+                            <AlertCircle className="w-4 h-4 shrink-0" />
+                            Refund Claim Failed
+                          </span>
+                          <p className="text-xs text-foreground/75 leading-relaxed font-light">
+                            The refund claim transaction finalized but the refund was not claimed. This can happen if the transaction reverted.
+                          </p>
+                          <div className="flex flex-col gap-2">
+                            <div className="text-[10px] font-mono text-foreground/50 truncate flex items-center justify-between bg-charcoal-dark/50 border border-charcoal-light/10 px-2.5 py-1.5 rounded-lg select-all">
+                              <span className="truncate">{claimRefundTx?.hash || pendingClaimRefundTx?.hash}</span>
+                              <a
+                                href={`https://explorer-bradbury.genlayer.com/tx/${claimRefundTx?.hash || pendingClaimRefundTx?.hash}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-foreground/40 hover:text-foreground transition-all ml-2 shrink-0"
+                                title="View failed transaction on explorer"
+                              >
+                                <ExternalLink className="w-3.5 h-3.5" />
+                              </a>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={handleClaimRefundClick}
+                              className="w-full py-3 bg-brand-gold hover:bg-brand-gold/90 text-charcoal-dark font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm"
+                            >
+                              Retry Refund Claim
+                            </button>
+                          </div>
+                        </div>
+                      ) : (pendingClaimRefundTx && !userStake.claimed) ? (
                         <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
                           <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
                             Claim Refund
