@@ -35,6 +35,8 @@ export default function AdminPanel() {
   } = useAdminStore();
 
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [countdownText, setCountdownText] = useState<string>('');
+  const [deadmanCountdownText, setDeadmanCountdownText] = useState<string>('');
 
   // Poll configuration settings on interval to keep dashboard values synced.
   useEffect(() => {
@@ -44,6 +46,54 @@ export default function AdminPanel() {
     }, 30000);
     return () => clearInterval(interval);
   }, [loadAdminData]);
+
+  // Formats difference in seconds to a human readable duration.
+  const formatDiff = (diff: number) => {
+    const days = Math.floor(diff / 86400);
+    const hours = Math.floor((diff % 86400) / 3600);
+    const minutes = Math.floor((diff % 3600) / 60);
+    const seconds = diff % 60;
+
+    const formatted = [];
+    if (days > 0) formatted.push(`${days}d`);
+    if (hours > 0 || days > 0) formatted.push(`${hours}h`);
+    if (minutes > 0 || hours > 0 || days > 0) formatted.push(`${minutes}m`);
+    formatted.push(`${seconds}s`);
+    return formatted.join(' ');
+  };
+
+  // Computes the remaining time for the active killswitch window and dead-man switch.
+  useEffect(() => {
+    const updateCountdown = () => {
+      const now = Math.floor(Date.now() / 1000);
+
+      if (killswitchStatus?.active && killswitchStatus.window_ends_at) {
+        const diff = killswitchStatus.window_ends_at - now;
+        if (diff <= 0) {
+          setCountdownText('Emergency window expired');
+        } else {
+          setCountdownText(formatDiff(diff));
+        }
+      } else {
+        setCountdownText('');
+      }
+
+      if (killswitchStatus && !killswitchStatus.active && killswitchStatus.dead_man_triggers_at) {
+        const diff = killswitchStatus.dead_man_triggers_at - now;
+        if (diff <= 0) {
+          setDeadmanCountdownText('Eligible for trigger');
+        } else {
+          setDeadmanCountdownText(formatDiff(diff));
+        }
+      } else {
+        setDeadmanCountdownText('');
+      }
+    };
+
+    updateCountdown();
+    const timer = setInterval(updateCountdown, 1000);
+    return () => clearInterval(timer);
+  }, [killswitchStatus]);
 
   const {
     write,
@@ -58,7 +108,7 @@ export default function AdminPanel() {
   });
 
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
-  const [activeAction, setActiveAction] = useState<'pause' | 'heartbeat' | null>(null);
+  const [activeAction, setActiveAction] = useState<'pause' | 'heartbeat' | 'withdraw' | 'activate_killswitch' | 'deactivate_killswitch' | null>(null);
 
   const handleCopy = async (text: string, key: string) => {
     try {
@@ -99,6 +149,21 @@ export default function AdminPanel() {
     }
   };
 
+  const handleWithdrawClick = () => {
+    setActiveAction('withdraw');
+    setIsConfirmOpen(true);
+  };
+
+  const handleActivateKillswitchClick = () => {
+    setActiveAction('activate_killswitch');
+    setIsConfirmOpen(true);
+  };
+
+  const handleDeactivateKillswitchClick = () => {
+    setActiveAction('deactivate_killswitch');
+    setIsConfirmOpen(true);
+  };
+
   const handleConfirmAction = async () => {
     if (!adminState) return;
     setIsConfirmOpen(false);
@@ -109,9 +174,39 @@ export default function AdminPanel() {
           functionName: 'set_pause',
           args: [!adminState.paused],
         });
+      } else if (activeAction === 'withdraw') {
+        await write({
+          address: CONTRACT_ADDRESS,
+          functionName: 'withdraw_fees',
+        });
+      } else if (activeAction === 'activate_killswitch') {
+        await write({
+          address: CONTRACT_ADDRESS,
+          functionName: 'activate_killswitch',
+        });
+      } else if (activeAction === 'deactivate_killswitch') {
+        await write({
+          address: CONTRACT_ADDRESS,
+          functionName: 'deactivate_killswitch',
+        });
       }
     } catch (err) {
       // Errors handled within contract write hook
+    }
+  };
+
+  const getModalTitle = () => {
+    switch (activeAction) {
+      case 'pause':
+        return 'Confirm Pause Status Change';
+      case 'withdraw':
+        return 'Confirm Accumulated Fees Withdrawal';
+      case 'activate_killswitch':
+        return 'Confirm Killswitch Activation';
+      case 'deactivate_killswitch':
+        return 'Confirm Killswitch Deactivation';
+      default:
+        return 'Confirm Action';
     }
   };
 
@@ -255,6 +350,22 @@ export default function AdminPanel() {
                   </span>
                 </div>
               </div>
+
+              <button
+                type="button"
+                disabled={accumulatedFees === 0n || writeStatus !== 'idle'}
+                onClick={handleWithdrawClick}
+                className="w-full py-2.5 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light/35 text-foreground/80 hover:text-foreground disabled:opacity-40 disabled:hover:bg-charcoal-light disabled:cursor-not-allowed font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-xs flex items-center justify-center gap-2 mt-2"
+              >
+                <Coins className="w-3.5 h-3.5 text-brand-gold" />
+                Withdraw Accumulated Fees
+              </button>
+
+              {connectedAddress && adminState && connectedAddress.toLowerCase() !== adminState.fee_collector.toLowerCase() && (
+                <p className="text-[10px] text-brand-magenta/60 leading-snug mt-1 text-center">
+                  Notice: Connected wallet is not the designated Fee Collector.
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -275,8 +386,13 @@ export default function AdminPanel() {
 
               <div className="flex justify-between py-2 border-b border-charcoal-light/10">
                 <span className="text-foreground/50">Dead-Man Activation</span>
-                <span className="font-medium text-brand-magenta">
-                  {killswitchStatus ? formatDate(killswitchStatus.dead_man_triggers_at) : 'None'}
+                <span className="font-medium text-brand-magenta flex flex-col items-end">
+                  <span>{killswitchStatus ? formatDate(killswitchStatus.dead_man_triggers_at) : 'None'}</span>
+                  {killswitchStatus && !killswitchStatus.active && (
+                    <span className="text-[10px] text-foreground/40 mt-0.5 font-mono">
+                      in {deadmanCountdownText}
+                    </span>
+                  )}
                 </span>
               </div>
 
@@ -354,6 +470,33 @@ export default function AdminPanel() {
                 }`}
               />
             </div>
+
+            <div className="flex items-center justify-between p-3.5 bg-charcoal-dark/30 border border-charcoal-light/10 rounded-xl">
+              <div>
+                <span className="text-[10px] uppercase font-bold tracking-widest text-foreground/40 block">
+                  Killswitch Status
+                </span>
+                <span className="text-sm font-semibold mt-1 block">
+                  {killswitchStatus?.active ? 'Killswitch Active' : 'Killswitch Inactive'}
+                </span>
+              </div>
+              <div
+                className={`w-3.5 h-3.5 rounded-full ${
+                  killswitchStatus?.active ? 'bg-brand-magenta animate-pulse' : 'bg-brand-gold'
+                }`}
+              />
+            </div>
+
+            {killswitchStatus?.active && (
+              <div className="bg-brand-magenta/5 border border-brand-magenta/15 rounded-xl p-3 text-xs">
+                <span className="text-[10px] uppercase font-bold tracking-widest text-brand-magenta block mb-1">
+                  Emergency Withdraw Window Ends In
+                </span>
+                <span className="font-mono font-bold text-foreground">
+                  {countdownText}
+                </span>
+              </div>
+            )}
 
             {writeStatus !== 'idle' ? (
               /* Administrative Write Tracking */
@@ -529,6 +672,27 @@ export default function AdminPanel() {
                   <Heart className="w-4 h-4 text-brand-magenta shrink-0" />
                   Emit Admin Heartbeat
                 </button>
+
+                {!killswitchStatus?.active ? (
+                  <button
+                    type="button"
+                    onClick={handleActivateKillswitchClick}
+                    className="w-full py-3 bg-brand-magenta/10 hover:bg-brand-magenta/20 border border-brand-magenta/35 text-brand-magenta font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm flex items-center justify-center gap-2"
+                  >
+                    <ShieldAlert className="w-4 h-4 shrink-0" />
+                    Activate Killswitch
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={!killswitchStatus.can_deactivate || writeStatus !== 'idle'}
+                    onClick={handleDeactivateKillswitchClick}
+                    className="w-full py-3 bg-brand-gold/10 hover:bg-brand-gold/20 border border-brand-gold/35 text-brand-gold disabled:opacity-40 disabled:hover:bg-brand-gold/10 disabled:cursor-not-allowed font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm flex items-center justify-center gap-2"
+                  >
+                    <ShieldAlert className="w-4 h-4 shrink-0" />
+                    Deactivate Killswitch
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -541,7 +705,7 @@ export default function AdminPanel() {
           isOpen={isConfirmOpen}
           onClose={() => setIsConfirmOpen(false)}
           onConfirm={handleConfirmAction}
-          title={activeAction === 'pause' ? 'Confirm Pause Status Change' : 'Confirm Action'}
+          title={getModalTitle()}
         >
           {activeAction === 'pause' && (
             <div>
@@ -568,6 +732,92 @@ export default function AdminPanel() {
                 {adminState.paused
                   ? 'This transaction resumes all pool creations, staking actions, and operations.'
                   : 'This transaction temporarily suspends all new pool creations, staking actions, and on-chain interactions.'}
+              </p>
+              <p className="text-[11px] text-foreground/45 italic leading-snug">
+                Transactions on GenLayer Bradbury have a finality window of 25 to 40 minutes.
+              </p>
+            </div>
+          )}
+
+          {activeAction === 'withdraw' && (
+            <div>
+              <p className="mb-3">Please review the details below before signing the transaction in your wallet:</p>
+              <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-2.5 mb-4">
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">Destination (Collector)</span>
+                  <span className="font-mono text-foreground truncate max-w-[240px]">
+                    {adminState.fee_collector}
+                  </span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">Amount to Withdraw</span>
+                  <span className="font-semibold text-brand-gold">
+                    {weiToGen(accumulatedFees.toString())} GEN
+                  </span>
+                </div>
+              </div>
+              <p className="text-xs text-foreground/75 mb-3 leading-relaxed">
+                This transaction withdraws the accumulated fees from the contract and sends them directly to the fee collector address.
+              </p>
+              {connectedAddress && connectedAddress.toLowerCase() !== adminState.fee_collector.toLowerCase() && (
+                <p className="text-xs text-brand-magenta font-semibold mb-3 leading-relaxed">
+                  Warning: Your connected wallet is not the designated Fee Collector. This transaction will fail unless signed by the Fee Collector.
+                </p>
+              )}
+              <p className="text-[11px] text-foreground/45 italic leading-snug">
+                Transactions on GenLayer Bradbury have a finality window of 25 to 40 minutes.
+              </p>
+            </div>
+          )}
+
+          {activeAction === 'activate_killswitch' && (
+            <div>
+              <p className="mb-3 text-brand-magenta font-bold">CRITICAL SAFETY ACTION ALERT</p>
+              <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-2.5 mb-4">
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">Action</span>
+                  <span className="font-semibold text-brand-magenta font-mono">Activate Killswitch</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">Initial Lock Duration</span>
+                  <span className="font-semibold text-foreground">7 Days (KILLSWITCH_WINDOW)</span>
+                </div>
+              </div>
+              <div className="space-y-3 text-xs text-foreground/75 leading-relaxed mb-4">
+                <p>
+                  Activating the killswitch is a severe administrative override designed to protect user assets.
+                </p>
+                <p>
+                  1. It immediately pauses new pool creations, pool joins, and other normal contract operations.
+                </p>
+                <p>
+                  2. It opens a 7-day emergency withdrawal window during which users can withdraw their staked assets from any open pools.
+                </p>
+                <p className="font-semibold text-brand-magenta">
+                  3. This action is IRREVERSIBLE for the next 7 days. The killswitch cannot be deactivated, and normal operations cannot resume, until the window expires.
+                </p>
+              </div>
+              <p className="text-[11px] text-foreground/45 italic leading-snug">
+                Transactions on GenLayer Bradbury have a finality window of 25 to 40 minutes.
+              </p>
+            </div>
+          )}
+
+          {activeAction === 'deactivate_killswitch' && (
+            <div>
+              <p className="mb-3">Please review the details below before signing the transaction in your wallet:</p>
+              <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-2.5 mb-4">
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">Action</span>
+                  <span className="font-semibold text-brand-gold font-mono">Deactivate Killswitch</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">Status Impact</span>
+                  <span className="font-semibold text-foreground">Restore normal contract controls</span>
+                </div>
+              </div>
+              <p className="text-xs text-foreground/75 mb-3 leading-relaxed">
+                This transaction turns off the killswitch, enabling you to unpause normal operations.
               </p>
               <p className="text-[11px] text-foreground/45 italic leading-snug">
                 Transactions on GenLayer Bradbury have a finality window of 25 to 40 minutes.
