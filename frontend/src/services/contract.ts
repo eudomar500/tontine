@@ -328,4 +328,33 @@ export async function getAccumulatedFees(): Promise<bigint> {
   );
 }
 
+export interface UpgradeInfo {
+  has_pending: boolean;
+  code_hash: string;
+  description: string;
+  apply_after: number;
+}
+
+/**
+ * Fetches the pending code upgrade status details from the contract.
+ */
+export async function getPendingUpgradeInfo(): Promise<UpgradeInfo> {
+  return rpcQueue.enqueue(() =>
+    withRateLimitRetry(async () => {
+      const res = await client.readContract({
+        address: CONTRACT_ADDRESS,
+        functionName: 'get_pending_upgrade_info',
+      });
+      const data = res as any;
+      return {
+        has_pending: Boolean(data.has_pending),
+        code_hash: String(data.code_hash),
+        description: String(data.description),
+        apply_after: Number(data.apply_after),
+      };
+    })
+  );
+}
+
+
 

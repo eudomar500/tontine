@@ -32,6 +32,7 @@ export default function AdminPanel() {
     killswitchStatus,
     accumulatedFees,
     creationFee,
+    pendingUpgradeInfo,
     isLoading,
     error,
     loadAdminData,
@@ -845,7 +846,7 @@ export default function AdminPanel() {
                 )}
               </div>
 
-              <div className="flex flex-col py-2">
+              <div className="flex flex-col py-2 border-b border-charcoal-light/10">
                 <div className="flex justify-between items-center">
                   <span className="text-foreground/50">Pending Creation Fee</span>
                   <span className="font-medium text-foreground text-right">
@@ -870,6 +871,68 @@ export default function AdminPanel() {
                     >
                       Apply Fee Change
                     </button>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex flex-col py-2">
+                <div className="flex justify-between items-center">
+                  <span className="text-foreground/50">Pending Code Upgrade</span>
+                  <span className="font-medium text-foreground text-right">
+                    {pendingUpgradeInfo?.has_pending ? (
+                      <span className="text-brand-gold font-semibold">Pending</span>
+                    ) : (
+                      'None'
+                    )}
+                  </span>
+                </div>
+                {pendingUpgradeInfo?.has_pending && (
+                  <div className="flex flex-col gap-2 mt-2 bg-charcoal-dark/30 border border-charcoal-light/10 p-2.5 rounded-xl text-[11px]">
+                    <div className="text-foreground/80 font-light leading-relaxed">
+                      {pendingUpgradeInfo.description}
+                    </div>
+
+                    <div className="flex items-center justify-between py-1 border-t border-charcoal-light/10 mt-1">
+                      <span className="text-foreground/45">Code Hash</span>
+                      <div className="flex items-center gap-1">
+                        <span className="font-mono text-[10px] text-foreground/75 truncate max-w-[120px]" title={pendingUpgradeInfo.code_hash}>
+                          {truncateAddress(pendingUpgradeInfo.code_hash)}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleCopy(pendingUpgradeInfo.code_hash, 'code_hash')}
+                          className="p-0.5 hover:bg-charcoal-light rounded text-foreground/60 hover:text-foreground transition-all cursor-pointer"
+                          title="Copy Code Hash"
+                        >
+                          {copiedKey === 'code_hash' ? (
+                            <Check className="w-3 h-3 text-brand-gold" />
+                          ) : (
+                            <Copy className="w-3 h-3" />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex justify-between items-center py-1 border-t border-charcoal-light/10">
+                      <span className="text-foreground/45">Unlock Time</span>
+                      <span className="font-medium text-foreground">
+                        {formatDate(pendingUpgradeInfo.apply_after)}
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between items-center py-1 border-t border-charcoal-light/10">
+                      <span className="text-foreground/45">Status</span>
+                      {currentTimestamp >= pendingUpgradeInfo.apply_after ? (
+                        <span className="font-semibold text-brand-gold uppercase tracking-wider text-[9px]">
+                          Ready to apply
+                        </span>
+                      ) : (
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-foreground/45">Unlocks in</span>
+                          <AdminCountdown deadline={pendingUpgradeInfo.apply_after} />
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
