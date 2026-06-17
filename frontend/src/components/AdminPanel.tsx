@@ -19,8 +19,11 @@ import {
 import { useWalletStore } from '../store/wallet';
 import { useAdminStore } from '../store/admin';
 import { useContractWrite } from '../hooks/useContractWrite';
-import { CONTRACT_ADDRESS, weiToGen, truncateAddress } from '../services/contract';
+import { CONTRACT_ADDRESS, weiToGen, truncateAddress, hexToBytes } from '../services/contract';
 import ConfirmModal from './ConfirmModal';
+import AdminCountdown from './AdminCountdown';
+import AdminInputField from './AdminInputField';
+import { CalldataAddress } from 'genlayer-js/types';
 
 export default function AdminPanel() {
   const connectedAddress = useWalletStore((state) => state.connectedAddress);
@@ -37,6 +40,38 @@ export default function AdminPanel() {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [countdownText, setCountdownText] = useState<string>('');
   const [deadmanCountdownText, setDeadmanCountdownText] = useState<string>('');
+
+  const [newCreationFee, setNewCreationFee] = useState<string>('');
+  const [newFeeCollector, setNewFeeCollector] = useState<string>('');
+  const [newAdmin, setNewAdmin] = useState<string>('');
+
+  const [creationFeeError, setCreationFeeError] = useState<string | null>(null);
+  const [feeCollectorError, setFeeCollectorError] = useState<string | null>(null);
+  const [newAdminError, setNewAdminError] = useState<string | null>(null);
+
+  const [currentTimestamp, setCurrentTimestamp] = useState(Math.floor(Date.now() / 1000));
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTimestamp(Math.floor(Date.now() / 1000));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const parseGenToWei = (genAmount: string): bigint => {
+    const clean = genAmount.trim();
+    if (!clean) return 0n;
+
+    const parts = clean.split('.');
+    const integerPart = parts[0] || '0';
+    let fractionPart = parts[1] || '';
+    fractionPart = fractionPart.slice(0, 18).padEnd(18, '0');
+
+    const integerWei = BigInt(integerPart) * 1000000000000000000n;
+    const fractionWei = BigInt(fractionPart);
+
+    return integerWei + fractionWei;
+  };
 
   // Poll configuration settings on interval to keep dashboard values synced.
   useEffect(() => {
@@ -108,7 +143,20 @@ export default function AdminPanel() {
   });
 
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
-  const [activeAction, setActiveAction] = useState<'pause' | 'heartbeat' | 'withdraw' | 'activate_killswitch' | 'deactivate_killswitch' | null>(null);
+  const [activeAction, setActiveAction] = useState<
+    | 'pause'
+    | 'heartbeat'
+    | 'withdraw'
+    | 'activate_killswitch'
+    | 'deactivate_killswitch'
+    | 'propose_creation_fee'
+    | 'apply_creation_fee'
+    | 'propose_fee_collector'
+    | 'apply_fee_collector'
+    | 'propose_admin'
+    | 'accept_admin'
+    | null
+  >(null);
 
   const handleCopy = async (text: string, key: string) => {
     try {
@@ -164,6 +212,62 @@ export default function AdminPanel() {
     setIsConfirmOpen(true);
   };
 
+  const handleProposeCreationFeeClick = () => {
+    setCreationFeeError(null);
+    const feeVal = parseFloat(newCreationFee);
+    if (isNaN(feeVal) || feeVal < 0) {
+      setCreationFeeError('Creation fee must be a non-negative number');
+      return;
+    }
+    if (feeVal > 100) {
+      setCreationFeeError('Creation fee cannot exceed the cap of 100 GEN');
+      return;
+    }
+    setActiveAction('propose_creation_fee');
+    setIsConfirmOpen(true);
+  };
+
+  const handleApplyCreationFeeClick = () => {
+    setActiveAction('apply_creation_fee');
+    setIsConfirmOpen(true);
+  };
+
+  const handleProposeFeeCollectorClick = () => {
+    setFeeCollectorError(null);
+    const addressRegex = /^0x[a-fA-F0-9]{40}$/;
+    if (!addressRegex.test(newFeeCollector.trim())) {
+      setFeeCollectorError('Must be a valid hex address');
+      return;
+    }
+    setActiveAction('propose_fee_collector');
+    setIsConfirmOpen(true);
+  };
+
+  const handleApplyFeeCollectorClick = () => {
+    setActiveAction('apply_fee_collector');
+    setIsConfirmOpen(true);
+  };
+
+  const handleProposeAdminClick = () => {
+    setNewAdminError(null);
+    const addressRegex = /^0x[a-fA-F0-9]{40}$/;
+    if (!addressRegex.test(newAdmin.trim())) {
+      setNewAdminError('Must be a valid hex address');
+      return;
+    }
+    if (newAdmin.trim().toLowerCase() === adminState?.admin.toLowerCase()) {
+      setNewAdminError('Proposed admin cannot be the current admin');
+      return;
+    }
+    setActiveAction('propose_admin');
+    setIsConfirmOpen(true);
+  };
+
+  const handleAcceptAdminClick = () => {
+    setActiveAction('accept_admin');
+    setIsConfirmOpen(true);
+  };
+
   const handleConfirmAction = async () => {
     if (!adminState) return;
     setIsConfirmOpen(false);
@@ -189,6 +293,45 @@ export default function AdminPanel() {
           address: CONTRACT_ADDRESS,
           functionName: 'deactivate_killswitch',
         });
+      } else if (activeAction === 'propose_creation_fee') {
+        const feeWei = parseGenToWei(newCreationFee);
+        await write({
+          address: CONTRACT_ADDRESS,
+          functionName: 'propose_creation_fee_change',
+          args: [feeWei],
+        });
+        setNewCreationFee('');
+      } else if (activeAction === 'apply_creation_fee') {
+        await write({
+          address: CONTRACT_ADDRESS,
+          functionName: 'apply_creation_fee_change',
+        });
+      } else if (activeAction === 'propose_fee_collector') {
+        const calldataAddr = new CalldataAddress(hexToBytes(newFeeCollector.trim()));
+        await write({
+          address: CONTRACT_ADDRESS,
+          functionName: 'propose_fee_collector_change',
+          args: [calldataAddr],
+        });
+        setNewFeeCollector('');
+      } else if (activeAction === 'apply_fee_collector') {
+        await write({
+          address: CONTRACT_ADDRESS,
+          functionName: 'apply_fee_collector_change',
+        });
+      } else if (activeAction === 'propose_admin') {
+        const calldataAddr = new CalldataAddress(hexToBytes(newAdmin.trim()));
+        await write({
+          address: CONTRACT_ADDRESS,
+          functionName: 'propose_admin_transfer',
+          args: [calldataAddr],
+        });
+        setNewAdmin('');
+      } else if (activeAction === 'accept_admin') {
+        await write({
+          address: CONTRACT_ADDRESS,
+          functionName: 'accept_admin_transfer',
+        });
       }
     } catch (err) {
       // Errors handled within contract write hook
@@ -205,6 +348,18 @@ export default function AdminPanel() {
         return 'Confirm Killswitch Activation';
       case 'deactivate_killswitch':
         return 'Confirm Killswitch Deactivation';
+      case 'propose_creation_fee':
+        return 'Confirm Propose Creation Fee Change';
+      case 'apply_creation_fee':
+        return 'Confirm Apply Creation Fee Change';
+      case 'propose_fee_collector':
+        return 'Confirm Propose Fee Collector Rotation';
+      case 'apply_fee_collector':
+        return 'Confirm Apply Fee Collector Rotation';
+      case 'propose_admin':
+        return 'Confirm Propose Admin Transfer';
+      case 'accept_admin':
+        return 'Confirm Accept Admin Transfer';
       default:
         return 'Confirm Action';
     }
@@ -240,13 +395,243 @@ export default function AdminPanel() {
     );
   }
 
-  if (!isAdmin) {
+  const isPendingAdminWallet =
+    connectedAddress &&
+    adminState &&
+    adminState.pending_admin.toLowerCase() === connectedAddress.toLowerCase();
+
+  const isAdminOrPending = isAdmin || isPendingAdminWallet;
+
+  if (!isAdminOrPending) {
     return null;
   }
 
   const isPendingAdmin = adminState.pending_admin !== '0x0000000000000000000000000000000000000000';
   const isPendingFeeCollector = adminState.pending_fee_collector !== '0x0000000000000000000000000000000000000000';
   const isPendingCreationFee = adminState.pending_creation_fee !== '0';
+
+  if (isPendingAdminWallet) {
+    return (
+      <div className="w-full max-w-xl mx-auto space-y-6">
+        <div className="border-b border-charcoal-light/25 pb-4">
+          <h1 className="text-2xl font-bold text-foreground">Pending Admin Dashboard</h1>
+          <p className="text-xs text-foreground/50 mt-1 font-light">
+            Accept ownership transfer to assume contract administration.
+          </p>
+        </div>
+
+        <div className="bg-charcoal-medium/40 border border-charcoal-light/15 p-6 rounded-2xl space-y-4">
+          <div className="flex items-center gap-2 text-xs font-semibold text-foreground/45 tracking-widest uppercase">
+            <Clock className="w-4 h-4 text-brand-gold" />
+            Admin Transfer Verification
+          </div>
+
+          <div className="space-y-4 text-xs">
+            <div className="flex justify-between py-2 border-b border-charcoal-light/10">
+              <span className="text-foreground/50">Proposed Admin</span>
+              <span className="font-mono text-foreground font-semibold">{truncateAddress(adminState.pending_admin)}</span>
+            </div>
+
+            <div className="flex justify-between py-2 border-b border-charcoal-light/10">
+              <span className="text-foreground/50">Transfer Expiration</span>
+              <span className="font-medium text-brand-magenta">
+                {formatDate(adminState.admin_transfer_deadline)}
+              </span>
+            </div>
+
+            <div className="flex justify-between py-2">
+              <span className="text-foreground/50">Time Remaining</span>
+              <span className="font-medium text-brand-magenta">
+                <AdminCountdown deadline={adminState.admin_transfer_deadline} isExpiration={true} />
+              </span>
+            </div>
+
+            {writeStatus !== 'idle' ? (
+              <div className="bg-charcoal-medium/30 border border-charcoal-light/35 rounded-2xl p-4.5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-foreground/45">
+                    Operations Log
+                  </span>
+                  {writeStatus === 'signing' && (
+                    <span className="text-[9px] font-bold uppercase tracking-wider text-brand-gold bg-brand-gold/10 border border-brand-gold/25 px-2.5 py-0.5 rounded-full">
+                      Signing
+                    </span>
+                  )}
+                  {writeStatus === 'pending' && (
+                    <span className="text-[9px] font-bold uppercase tracking-wider text-brand-gold bg-brand-gold/10 border border-brand-gold/25 px-2.5 py-0.5 rounded-full animate-pulse">
+                      Submitting
+                    </span>
+                  )}
+                  {writeStatus === 'accepted' && (
+                    <span className="text-[9px] font-bold uppercase tracking-wider text-brand-gold bg-brand-gold/10 border border-brand-gold/25 px-2.5 py-0.5 rounded-full">
+                      Accepted
+                    </span>
+                  )}
+                  {writeStatus === 'finalized' && (
+                    <span className="text-[9px] font-bold uppercase tracking-wider text-brand-gold bg-brand-gold/10 border border-brand-gold/25 px-2.5 py-0.5 rounded-full">
+                      Finalized
+                    </span>
+                  )}
+                  {writeStatus === 'error' && (
+                    <span className="text-[9px] font-bold uppercase tracking-wider text-brand-magenta bg-brand-magenta/10 border border-brand-magenta/25 px-2.5 py-0.5 rounded-full">
+                      Failed
+                    </span>
+                  )}
+                </div>
+
+                <div className="space-y-3">
+                  {writeStatus === 'signing' && (
+                    <div className="flex items-center gap-2">
+                      <Loader2 className="w-4 h-4 text-brand-gold animate-spin shrink-0" />
+                      <span className="text-xs text-foreground/80 font-medium">
+                        Please sign the transaction in your wallet.
+                      </span>
+                    </div>
+                  )}
+
+                  {writeStatus === 'pending' && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Loader2 className="w-4 h-4 text-brand-gold animate-spin shrink-0" />
+                        <span className="text-xs text-foreground/80 font-medium">
+                          Submitted on-chain. Awaiting block acceptance.
+                        </span>
+                      </div>
+                      {txHash && (
+                        <div className="text-[10px] font-mono text-foreground/50 truncate flex items-center justify-between bg-charcoal-dark/50 border border-charcoal-light/10 px-2 py-1 rounded-lg">
+                          <span className="truncate">{txHash}</span>
+                          <a
+                            href={`https://explorer-bradbury.genlayer.com/tx/${txHash}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-foreground/45 hover:text-foreground transition-all ml-1 shrink-0"
+                            title="View on Explorer"
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {writeStatus === 'accepted' && (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-brand-gold shrink-0" />
+                        <span className="text-xs text-foreground/95 font-semibold">
+                          Transaction accepted!
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-foreground/50 leading-relaxed font-light">
+                        Configuration changes will be fetched shortly. Finality takes 25 to 40 minutes.
+                      </p>
+                      {txHash && (
+                        <div className="text-[10px] font-mono text-foreground/50 truncate flex items-center justify-between bg-charcoal-dark/50 border border-charcoal-light/10 px-2 py-1 rounded-lg">
+                          <span className="truncate">{txHash}</span>
+                          <a
+                            href={`https://explorer-bradbury.genlayer.com/tx/${txHash}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-foreground/45 hover:text-foreground transition-all ml-1 shrink-0"
+                            title="View on Explorer"
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                          </a>
+                        </div>
+                      )}
+                      <button
+                        onClick={resetWrite}
+                        className="w-full py-1.5 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light text-xs font-semibold text-foreground rounded-xl transition-all cursor-pointer"
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  )}
+
+                  {writeStatus === 'finalized' && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-brand-gold shrink-0" />
+                        <span className="text-xs text-foreground/95 font-semibold">
+                          Transaction reached finality.
+                        </span>
+                      </div>
+                      <button
+                        onClick={resetWrite}
+                        className="w-full py-1.5 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light text-xs font-semibold text-foreground rounded-xl transition-all cursor-pointer"
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  )}
+
+                  {writeStatus === 'error' && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 text-brand-magenta shrink-0" />
+                        <span className="text-xs text-foreground/90 font-semibold">
+                          Transaction execution failed.
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-brand-magenta/80 leading-relaxed max-h-20 overflow-y-auto font-mono bg-brand-magenta/5 border border-brand-magenta/10 p-2 rounded-lg">
+                        {writeError?.message || 'Transaction was rejected or reverted.'}
+                      </p>
+                      <button
+                        onClick={resetWrite}
+                        className="w-full py-1.5 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light text-xs font-semibold text-foreground rounded-xl transition-all cursor-pointer"
+                      >
+                        Try Again
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                disabled={currentTimestamp > adminState.admin_transfer_deadline}
+                onClick={handleAcceptAdminClick}
+                className="w-full py-3 bg-brand-gold hover:bg-brand-gold/90 text-charcoal-dark font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm flex items-center justify-center gap-2 mt-4"
+              >
+                Accept Admin Transfer
+              </button>
+            )}
+          </div>
+        </div>
+
+        {isConfirmOpen && activeAction === 'accept_admin' && (
+          <ConfirmModal
+            isOpen={isConfirmOpen}
+            onClose={() => setIsConfirmOpen(false)}
+            onConfirm={handleConfirmAction}
+            title={getModalTitle()}
+          >
+            <div>
+              <p className="mb-3 text-brand-gold font-bold">ACCEPT SYSTEM OWNERSHIP</p>
+              <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-2.5 mb-4">
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">Incoming Admin</span>
+                  <span className="font-mono text-foreground truncate max-w-[240px]">
+                    {adminState.pending_admin}
+                  </span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">Status Impact</span>
+                  <span className="font-semibold text-brand-gold">Assume full administrative controls</span>
+                </div>
+              </div>
+              <p className="text-xs text-foreground/75 mb-3 leading-relaxed">
+                By signing this transaction, you accept ownership of the contract. Your wallet will immediately assume full admin privileges, including pausing the contract and managing system parameters.
+              </p>
+              <p className="text-[11px] text-foreground/45 italic leading-snug">
+                Transactions on GenLayer Bradbury have a finality window of 25 to 40 minutes.
+              </p>
+            </div>
+          </ConfirmModal>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="w-full space-y-10">
@@ -396,52 +781,97 @@ export default function AdminPanel() {
                 </span>
               </div>
 
-              <div className="flex justify-between py-2 border-b border-charcoal-light/10">
-                <span className="text-foreground/50">Pending Admin</span>
-                <span className="font-medium text-foreground text-right truncate max-w-[200px]">
-                  {isPendingAdmin ? (
-                    <div className="flex flex-col items-end">
+              <div className="flex flex-col py-2 border-b border-charcoal-light/10">
+                <div className="flex justify-between items-center">
+                  <span className="text-foreground/50">Pending Admin</span>
+                  <span className="font-medium text-foreground text-right truncate max-w-[200px]">
+                    {isPendingAdmin ? (
                       <span className="font-mono text-[10px]">{truncateAddress(adminState.pending_admin)}</span>
-                      <span className="text-[9px] text-foreground/40 mt-0.5">
-                        after {formatDate(adminState.admin_transfer_deadline)}
-                      </span>
+                    ) : (
+                      'None'
+                    )}
+                  </span>
+                </div>
+                {isPendingAdmin && (
+                  <div className="flex flex-col gap-2 mt-2 bg-charcoal-dark/30 border border-charcoal-light/10 p-2.5 rounded-xl">
+                    <div className="flex justify-between items-center text-[10px]">
+                      <span className="text-foreground/45">Expires in</span>
+                      <AdminCountdown deadline={adminState.admin_transfer_deadline} isExpiration={true} />
                     </div>
-                  ) : (
-                    'None'
-                  )}
-                </span>
+                    {connectedAddress && adminState.pending_admin.toLowerCase() === connectedAddress.toLowerCase() ? (
+                      <button
+                        type="button"
+                        disabled={currentTimestamp > adminState.admin_transfer_deadline || writeStatus !== 'idle'}
+                        onClick={handleAcceptAdminClick}
+                        className="w-full py-1.5 bg-brand-gold hover:bg-brand-gold/90 text-charcoal-dark text-[10px] font-bold rounded-lg transition-all cursor-pointer"
+                      >
+                        Accept Admin Transfer
+                      </button>
+                    ) : (
+                      <span className="text-[9px] text-brand-magenta/80 leading-snug font-medium italic text-center">
+                        Awaiting signature from proposed admin address.
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
 
-              <div className="flex justify-between py-2 border-b border-charcoal-light/10">
-                <span className="text-foreground/50">Pending Collector</span>
-                <span className="font-medium text-foreground text-right truncate max-w-[200px]">
-                  {isPendingFeeCollector ? (
-                    <div className="flex flex-col items-end">
+              <div className="flex flex-col py-2 border-b border-charcoal-light/10">
+                <div className="flex justify-between items-center">
+                  <span className="text-foreground/50">Pending Collector</span>
+                  <span className="font-medium text-foreground text-right truncate max-w-[200px]">
+                    {isPendingFeeCollector ? (
                       <span className="font-mono text-[10px]">{truncateAddress(adminState.pending_fee_collector)}</span>
-                      <span className="text-[9px] text-foreground/40 mt-0.5">
-                        after {formatDate(adminState.pending_fee_collector_deadline)}
-                      </span>
+                    ) : (
+                      'None'
+                    )}
+                  </span>
+                </div>
+                {isPendingFeeCollector && (
+                  <div className="flex flex-col gap-2 mt-2 bg-charcoal-dark/30 border border-charcoal-light/10 p-2.5 rounded-xl">
+                    <div className="flex justify-between items-center text-[10px]">
+                      <span className="text-foreground/45">Unlocks in</span>
+                      <AdminCountdown deadline={adminState.pending_fee_collector_deadline} />
                     </div>
-                  ) : (
-                    'None'
-                  )}
-                </span>
+                    <button
+                      type="button"
+                      disabled={currentTimestamp < adminState.pending_fee_collector_deadline || writeStatus !== 'idle'}
+                      onClick={handleApplyFeeCollectorClick}
+                      className="w-full py-1.5 bg-brand-gold disabled:opacity-40 disabled:hover:bg-brand-gold text-charcoal-dark text-[10px] font-bold rounded-lg transition-all cursor-pointer"
+                    >
+                      Apply Collector Rotation
+                    </button>
+                  </div>
+                )}
               </div>
 
-              <div className="flex justify-between py-2">
-                <span className="text-foreground/50">Pending Creation Fee</span>
-                <span className="font-medium text-foreground text-right">
-                  {isPendingCreationFee ? (
-                    <div className="flex flex-col items-end">
+              <div className="flex flex-col py-2">
+                <div className="flex justify-between items-center">
+                  <span className="text-foreground/50">Pending Creation Fee</span>
+                  <span className="font-medium text-foreground text-right">
+                    {isPendingCreationFee ? (
                       <span>{weiToGen(adminState.pending_creation_fee)} GEN</span>
-                      <span className="text-[9px] text-foreground/40 mt-0.5">
-                        after {formatDate(adminState.pending_creation_fee_deadline)}
-                      </span>
+                    ) : (
+                      'None'
+                    )}
+                  </span>
+                </div>
+                {isPendingCreationFee && (
+                  <div className="flex flex-col gap-2 mt-2 bg-charcoal-dark/30 border border-charcoal-light/10 p-2.5 rounded-xl">
+                    <div className="flex justify-between items-center text-[10px]">
+                      <span className="text-foreground/45">Unlocks in</span>
+                      <AdminCountdown deadline={adminState.pending_creation_fee_deadline} />
                     </div>
-                  ) : (
-                    'None'
-                  )}
-                </span>
+                    <button
+                      type="button"
+                      disabled={currentTimestamp < adminState.pending_creation_fee_deadline || writeStatus !== 'idle'}
+                      onClick={handleApplyCreationFeeClick}
+                      className="w-full py-1.5 bg-brand-gold disabled:opacity-40 disabled:hover:bg-brand-gold text-charcoal-dark text-[10px] font-bold rounded-lg transition-all cursor-pointer"
+                    >
+                      Apply Fee Change
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -699,6 +1129,89 @@ export default function AdminPanel() {
         </div>
       </div>
 
+      {/* Propose System Updates Card */}
+      {isAdmin && (
+        <div className="bg-charcoal-medium/40 border border-charcoal-light/15 p-6 rounded-2xl space-y-6">
+          <div>
+            <h2 className="text-xl font-bold text-foreground">Propose System Updates</h2>
+            <p className="text-xs text-foreground/50 mt-1 font-light">
+              Queue contract parameter adjustments and administrative handoffs under standard protocol timelocks.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {/* Propose Creation Fee Change */}
+            <div className="space-y-4 flex flex-col justify-between bg-charcoal-dark/20 border border-charcoal-light/10 p-4 rounded-xl">
+              <AdminInputField
+                label="Propose Creation Fee"
+                placeholder="e.g. 1.5 (in GEN)"
+                value={newCreationFee}
+                onChange={(val) => {
+                  setNewCreationFee(val);
+                  setCreationFeeError(null);
+                }}
+                error={creationFeeError}
+                disabled={writeStatus !== 'idle'}
+              />
+              <button
+                type="button"
+                disabled={!newCreationFee.trim() || writeStatus !== 'idle'}
+                onClick={handleProposeCreationFeeClick}
+                className="w-full py-2.5 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light text-xs font-semibold text-foreground rounded-xl transition-all cursor-pointer mt-2"
+              >
+                Queue Fee Update
+              </button>
+            </div>
+
+            {/* Propose Fee Collector Rotation */}
+            <div className="space-y-4 flex flex-col justify-between bg-charcoal-dark/20 border border-charcoal-light/10 p-4 rounded-xl">
+              <AdminInputField
+                label="Propose Fee Collector"
+                placeholder="e.g. 0x..."
+                value={newFeeCollector}
+                onChange={(val) => {
+                  setNewFeeCollector(val);
+                  setFeeCollectorError(null);
+                }}
+                error={feeCollectorError}
+                disabled={writeStatus !== 'idle'}
+              />
+              <button
+                type="button"
+                disabled={!newFeeCollector.trim() || writeStatus !== 'idle'}
+                onClick={handleProposeFeeCollectorClick}
+                className="w-full py-2.5 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light text-xs font-semibold text-foreground rounded-xl transition-all cursor-pointer mt-2"
+              >
+                Queue Collector Rotation
+              </button>
+            </div>
+
+            {/* Propose Admin Transfer */}
+            <div className="space-y-4 flex flex-col justify-between bg-charcoal-dark/20 border border-charcoal-light/10 p-4 rounded-xl">
+              <AdminInputField
+                label="Propose Admin Transfer"
+                placeholder="e.g. 0x..."
+                value={newAdmin}
+                onChange={(val) => {
+                  setNewAdmin(val);
+                  setNewAdminError(null);
+                }}
+                error={newAdminError}
+                disabled={writeStatus !== 'idle'}
+              />
+              <button
+                type="button"
+                disabled={!newAdmin.trim() || writeStatus !== 'idle'}
+                onClick={handleProposeAdminClick}
+                className="w-full py-2.5 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light text-xs font-semibold text-foreground rounded-xl transition-all cursor-pointer mt-2"
+              >
+                Initiate Admin Transfer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Confirmation Modal */}
       {adminState && (
         <ConfirmModal
@@ -818,6 +1331,164 @@ export default function AdminPanel() {
               </div>
               <p className="text-xs text-foreground/75 mb-3 leading-relaxed">
                 This transaction turns off the killswitch, enabling you to unpause normal operations.
+              </p>
+              <p className="text-[11px] text-foreground/45 italic leading-snug">
+                Transactions on GenLayer Bradbury have a finality window of 25 to 40 minutes.
+              </p>
+            </div>
+          )}
+
+          {activeAction === 'propose_creation_fee' && (
+            <div>
+              <p className="mb-3">Please review the proposed update below before signing the transaction in your wallet:</p>
+              <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-2.5 mb-4">
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">Current Fee</span>
+                  <span className="font-semibold text-foreground">
+                    {weiToGen(creationFee.toString())} GEN
+                  </span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">Proposed Fee</span>
+                  <span className="font-semibold text-brand-gold">
+                    {newCreationFee} GEN
+                  </span>
+                </div>
+              </div>
+              <p className="text-xs text-foreground/75 mb-3 leading-relaxed">
+                This transaction queues a change to the pool creation fee. The proposal will be locked for a 48 hour timelock period before it can be applied to the contract.
+              </p>
+              <p className="text-[11px] text-foreground/45 italic leading-snug">
+                Transactions on GenLayer Bradbury have a finality window of 25 to 40 minutes.
+              </p>
+            </div>
+          )}
+
+          {activeAction === 'apply_creation_fee' && (
+            <div>
+              <p className="mb-3">Please review the details below before signing the transaction in your wallet:</p>
+              <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-2.5 mb-4">
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">Action</span>
+                  <span className="font-semibold text-brand-gold font-mono">Apply Creation Fee Change</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">New Fee</span>
+                  <span className="font-semibold text-foreground">
+                    {adminState && weiToGen(adminState.pending_creation_fee)} GEN
+                  </span>
+                </div>
+              </div>
+              <p className="text-xs text-foreground/75 mb-3 leading-relaxed">
+                This transaction applies the pending creation fee change, updating the required fee for all future pool creations.
+              </p>
+              <p className="text-[11px] text-foreground/45 italic leading-snug">
+                Transactions on GenLayer Bradbury have a finality window of 25 to 40 minutes.
+              </p>
+            </div>
+          )}
+
+          {activeAction === 'propose_fee_collector' && (
+            <div>
+              <p className="mb-3">Please review the proposed update below before signing the transaction in your wallet:</p>
+              <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-2.5 mb-4">
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">Current Collector</span>
+                  <span className="font-mono text-foreground truncate max-w-[240px]">
+                    {adminState.fee_collector}
+                  </span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">Proposed Collector</span>
+                  <span className="font-mono text-brand-gold truncate max-w-[240px]">
+                    {newFeeCollector}
+                  </span>
+                </div>
+              </div>
+              <p className="text-xs text-foreground/75 mb-3 leading-relaxed">
+                This transaction queues a change to the fee collector address. The rotation will be locked for a 48 hour timelock period before it can be applied.
+              </p>
+              <p className="text-[11px] text-foreground/45 italic leading-snug">
+                Transactions on GenLayer Bradbury have a finality window of 25 to 40 minutes.
+              </p>
+            </div>
+          )}
+
+          {activeAction === 'apply_fee_collector' && (
+            <div>
+              <p className="mb-3">Please review the details below before signing the transaction in your wallet:</p>
+              <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-2.5 mb-4">
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">Action</span>
+                  <span className="font-semibold text-brand-gold font-mono">Apply Fee Collector Rotation</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">New Collector</span>
+                  <span className="font-mono text-foreground truncate max-w-[240px]">
+                    {adminState.pending_fee_collector}
+                  </span>
+                </div>
+              </div>
+              <p className="text-xs text-foreground/75 mb-3 leading-relaxed">
+                This transaction completes the rotation, directing all future creation fee withdrawals to the new fee collector address.
+              </p>
+              <p className="text-[11px] text-foreground/45 italic leading-snug">
+                Transactions on GenLayer Bradbury have a finality window of 25 to 40 minutes.
+              </p>
+            </div>
+          )}
+
+          {activeAction === 'propose_admin' && (
+            <div>
+              <p className="mb-3 text-brand-magenta font-bold">CRITICAL ADMINISTRATIVE TRANSFER</p>
+              <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-2.5 mb-4">
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">Current Admin</span>
+                  <span className="font-mono text-foreground truncate max-w-[240px]">
+                    {adminState.admin}
+                  </span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">Proposed Admin</span>
+                  <span className="font-mono text-brand-magenta truncate max-w-[240px]">
+                    {newAdmin}
+                  </span>
+                </div>
+              </div>
+              <div className="space-y-3 text-xs text-foreground/75 leading-relaxed mb-4">
+                <p>
+                  Proposing an admin transfer begins the two-step handoff process.
+                </p>
+                <p>
+                  1. The proposal creates a pending admin state that remains valid for 7 days (ADMIN_TRANSFER_WINDOW).
+                </p>
+                <p className="font-semibold text-brand-magenta">
+                  2. To complete the transfer, the incoming admin address must connect to the admin dashboard and sign the acceptance transaction before the 7-day window expires.
+                </p>
+              </div>
+              <p className="text-[11px] text-foreground/45 italic leading-snug">
+                Transactions on GenLayer Bradbury have a finality window of 25 to 40 minutes.
+              </p>
+            </div>
+          )}
+
+          {activeAction === 'accept_admin' && (
+            <div>
+              <p className="mb-3 text-brand-gold font-bold">ACCEPT SYSTEM OWNERSHIP</p>
+              <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-2.5 mb-4">
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">Incoming Admin</span>
+                  <span className="font-mono text-foreground truncate max-w-[240px]">
+                    {adminState.pending_admin}
+                  </span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">Status Impact</span>
+                  <span className="font-semibold text-brand-gold">Assume full administrative controls</span>
+                </div>
+              </div>
+              <p className="text-xs text-foreground/75 mb-3 leading-relaxed">
+                By signing this transaction, you accept ownership of the contract. Your wallet will immediately assume full admin privileges, including pausing the contract and managing system parameters.
               </p>
               <p className="text-[11px] text-foreground/45 italic leading-snug">
                 Transactions on GenLayer Bradbury have a finality window of 25 to 40 minutes.
