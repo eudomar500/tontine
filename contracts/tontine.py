@@ -173,6 +173,11 @@ KILLSWITCH_WINDOW = u256(604800)
 UPGRADE_TIMELOCK = u256(172800)
 ADMIN_TRANSFER_WINDOW = u256(604800)
 
+# Surfaced on-chain via get_contract_info so an applied code upgrade is
+# verifiable without reading bytecode. The live deployment carried no version
+# constant, so this upgrade is version 2.
+CONTRACT_VERSION = u256(2)
+
 CONFIDENCE_THRESHOLD = 70
 NO_INDEX = u8(255)
 
@@ -677,7 +682,11 @@ class Tontine(gl.Contract):
     @gl.public.write
     def force_refund(self, pool_id: u256):
         pool = self._get_pool(pool_id)
-        if pool.state != PoolState.OPEN:
+        # OPEN is the state a non-convergent resolution leaves behind today, but
+        # also accept RESOLVING so the backstop does not rely on the assumption
+        # that the transient RESOLVING write never persists. Either way a pool
+        # must remain refundable past timeout regardless of how it got stuck.
+        if pool.state != PoolState.OPEN and pool.state != PoolState.RESOLVING:
             raise gl.vm.UserError("pool not eligible for refund")
         if _now() < pool.timeout_deadline:
             raise gl.vm.UserError("timeout not reached")
@@ -962,6 +971,10 @@ class Tontine(gl.Contract):
             can_deactivate=self.killswitch_active and _now() > ends,
             dead_man_triggers_at=self.last_admin_heartbeat + DEADMAN_PERIOD,
         )
+
+    @gl.public.view
+    def get_contract_info(self) -> u256:
+        return CONTRACT_VERSION
 
     @gl.public.view
     def get_pending_upgrade_info(self) -> UpgradeInfo:
