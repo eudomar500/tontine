@@ -205,7 +205,7 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
       setWeatherSearchError(null);
       try {
         const response = await fetch(
-          `https://api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=5`
+          `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=5`
         );
         if (!response.ok) {
           throw new Error('Geocoding service returned an error');
