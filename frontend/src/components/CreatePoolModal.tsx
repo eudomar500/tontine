@@ -10,13 +10,13 @@ import { CalldataAddress } from 'genlayer-js/types';
 import { usePoolsStore } from '../store/pools';
 import { CURATED_PRESETS } from '../services/presets';
 
-const WEATHER_CITIES: Record<string, { lat: string; lng: string; label: string }> = {
-  nyc: { label: 'New York', lat: '40.7128', lng: '-74.0060' },
-  london: { label: 'London', lat: '51.5074', lng: '-0.1278' },
-  tokyo: { label: 'Tokyo', lat: '35.6762', lng: '139.6503' },
-  paris: { label: 'Paris', lat: '48.8566', lng: '2.3522' },
-  custom: { label: 'Custom Coordinates...', lat: '', lng: '' },
-};
+interface WeatherLocation {
+  name: string;
+  country: string;
+  admin1?: string;
+  latitude: number;
+  longitude: number;
+}
 
 /**
  * Parses GEN decimal string amount and converts it to a BigInt representation in wei units.
@@ -69,12 +69,13 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
   const [category, setCategory] = useState<string>('');
 
   // Weather source builder states
-  const [weatherApi, setWeatherApi] = useState<'open-meteo' | 'nws'>('open-meteo');
-  const [weatherCity, setWeatherCity] = useState<string>('nyc');
-  const [weatherLat, setWeatherLat] = useState<string>('40.7128');
-  const [weatherLng, setWeatherLng] = useState<string>('-74.0060');
-  const [weatherMetric, setWeatherMetric] = useState<string>('temperature_2m');
-  const [weatherStation, setWeatherStation] = useState<string>('KNYC');
+  const [weatherSearchQuery, setWeatherSearchQuery] = useState<string>('');
+  const [weatherSearchResults, setWeatherSearchResults] = useState<WeatherLocation[]>([]);
+  const [weatherSelectedCity, setWeatherSelectedCity] = useState<WeatherLocation | null>(null);
+  const [weatherMetric, setWeatherMetric] = useState<string>('temperature_2m_max');
+  const [weatherTempUnit, setWeatherTempUnit] = useState<'celsius' | 'fahrenheit'>('celsius');
+  const [isSearchingWeather, setIsSearchingWeather] = useState<boolean>(false);
+  const [weatherSearchError, setWeatherSearchError] = useState<string | null>(null);
 
   const handleAddPreset = (url: string) => {
     const cleanUrl = url.trim();
@@ -98,6 +99,41 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
     } else {
       setValidationError('Maximum of 5 verification sources allowed. Remove or edit an existing URL to add this preset.');
     }
+  };
+
+  const handleAddWeatherUrls = (urls: string[]) => {
+    setValidationError(null);
+
+    const uniqueNewUrls = urls.filter(
+      (url) => !sources.some((s) => s.trim().toLowerCase() === url.trim().toLowerCase())
+    );
+
+    if (uniqueNewUrls.length === 0) {
+      setValidationError('These weather source URLs are already added to the list.');
+      return;
+    }
+
+    const currentFilledCount = sources.filter((s) => s.trim()).length;
+
+    if (currentFilledCount + uniqueNewUrls.length > 5) {
+      setValidationError(
+        `Cannot add weather sources: adding ${uniqueNewUrls.length} new source URL(s) would exceed the maximum limit of 5 verification sources (currently using ${currentFilledCount}).`
+      );
+      return;
+    }
+
+    setSources((prev) => {
+      const nextSources = [...prev];
+      for (const url of uniqueNewUrls) {
+        const emptyIndex = nextSources.findIndex((s) => !s.trim());
+        if (emptyIndex !== -1) {
+          nextSources[emptyIndex] = url;
+        } else {
+          nextSources.push(url);
+        }
+      }
+      return nextSources;
+    });
   };
 
   // UI state
@@ -156,6 +192,36 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
     }
   }, [connectedAddress]);
 
+  // Fetch city coordinates from Open-Meteo search API with debounce
+  useEffect(() => {
+    const query = weatherSearchQuery.trim();
+    if (query.length < 2) {
+      setWeatherSearchResults([]);
+      return;
+    }
+
+    const delayDebounce = setTimeout(async () => {
+      setIsSearchingWeather(true);
+      setWeatherSearchError(null);
+      try {
+        const response = await fetch(
+          `https://api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=5`
+        );
+        if (!response.ok) {
+          throw new Error('Geocoding service returned an error');
+        }
+        const data = await response.json();
+        setWeatherSearchResults(data.results || []);
+      } catch (err) {
+        setWeatherSearchError('Failed to search for cities');
+      } finally {
+        setIsSearchingWeather(false);
+      }
+    }, 300);
+
+    return () => clearTimeout(delayDebounce);
+  }, [weatherSearchQuery]);
+
   const { write, status: writeStatus, txHash, error: writeError, reset: resetWrite } = useContractWrite({
     onSuccess: () => {
       loadPools();
@@ -177,12 +243,13 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
     setCreatorOutcomeIndex(0);
     setCreatorStake('');
     setCategory('');
-    setWeatherApi('open-meteo');
-    setWeatherCity('nyc');
-    setWeatherLat('40.7128');
-    setWeatherLng('-74.0060');
-    setWeatherMetric('temperature_2m');
-    setWeatherStation('KNYC');
+    setWeatherSearchQuery('');
+    setWeatherSearchResults([]);
+    setWeatherSelectedCity(null);
+    setWeatherMetric('temperature_2m_max');
+    setWeatherTempUnit('celsius');
+    setIsSearchingWeather(false);
+    setWeatherSearchError(null);
     setValidationError(null);
     setValidationWarning(null);
     setIsConfirmOpen(false);
@@ -937,155 +1004,156 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
                         </div>
 
                         {/* Weather Builder Fields */}
-                        <div className="space-y-3.5">
-                          <div className="grid grid-cols-2 gap-3">
-                            {/* Weather API Selector */}
-                            <div className="space-y-1.5">
-                              <label className="text-[9px] uppercase font-bold tracking-wider text-foreground/45 block">
-                                API Provider
-                              </label>
-                              <div className="flex gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => setWeatherApi('open-meteo')}
-                                  className={`flex-1 py-2 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
-                                    weatherApi === 'open-meteo'
-                                      ? 'bg-brand-gold text-charcoal-dark border-brand-gold'
-                                      : 'bg-charcoal-dark/50 border-charcoal-light/30 text-foreground/60 hover:text-foreground'
-                                  }`}
-                                >
-                                  Open-Meteo
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setWeatherApi('nws')}
-                                  className={`flex-1 py-2 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
-                                    weatherApi === 'nws'
-                                      ? 'bg-brand-gold text-charcoal-dark border-brand-gold'
-                                      : 'bg-charcoal-dark/50 border-charcoal-light/30 text-foreground/60 hover:text-foreground'
-                                  }`}
-                                >
-                                  NWS (US)
-                                </button>
-                              </div>
-                            </div>
-
-                            {/* Conditional inputs */}
-                            {weatherApi === 'open-meteo' ? (
-                              <div className="space-y-1.5">
-                                <label className="text-[9px] uppercase font-bold tracking-wider text-foreground/45 block">
-                                  Location / City
-                                </label>
-                                <select
-                                  value={weatherCity}
-                                  onChange={(e) => {
-                                    const city = e.target.value;
-                                    setWeatherCity(city);
-                                    if (city !== 'custom') {
-                                      setWeatherLat(WEATHER_CITIES[city].lat);
-                                      setWeatherLng(WEATHER_CITIES[city].lng);
-                                    }
-                                  }}
-                                  className="w-full px-3 py-2 bg-charcoal-dark border border-charcoal-light rounded-lg text-xs text-foreground/80 focus:outline-none transition-colors cursor-pointer"
-                                >
-                                  {Object.entries(WEATHER_CITIES).map(([key, val]) => (
-                                    <option key={key} value={key} className="text-foreground bg-charcoal-medium">
-                                      {val.label}
-                                    </option>
-                                  ))}
-                                </select>
-                              </div>
-                            ) : (
-                              <div className="space-y-1.5">
-                                <label className="text-[9px] uppercase font-bold tracking-wider text-foreground/45 block">
-                                  US Station Code
-                                </label>
+                        <div className="space-y-4">
+                          {/* City Selection */}
+                          <div className="space-y-1.5 relative">
+                            <label className="text-[9px] uppercase font-bold tracking-wider text-foreground/45 block">
+                              Location / City
+                            </label>
+                            
+                            {!weatherSelectedCity ? (
+                              <div className="relative">
                                 <input
                                   type="text"
-                                  placeholder="e.g. KNYC"
-                                  value={weatherStation}
-                                  onChange={(e) => setWeatherStation(e.target.value.toUpperCase())}
-                                  className="w-full px-3 py-2 bg-charcoal-dark border border-charcoal-light focus:border-foreground/15 rounded-lg text-xs text-foreground focus:outline-none transition-colors font-mono uppercase font-semibold"
+                                  placeholder="Search city (e.g. London, Tokyo...)"
+                                  value={weatherSearchQuery}
+                                  onChange={(e) => setWeatherSearchQuery(e.target.value)}
+                                  className="w-full px-3.5 py-2.5 bg-charcoal-dark border border-charcoal-light focus:border-foreground/15 rounded-xl text-xs text-foreground focus:outline-none transition-colors placeholder-foreground/20 font-semibold"
                                 />
+                                {isSearchingWeather && (
+                                  <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                                    <Loader2 className="w-3.5 h-3.5 text-brand-gold animate-spin" />
+                                  </div>
+                                )}
+                                
+                                {/* Autocomplete results dropdown */}
+                                {weatherSearchResults.length > 0 && (
+                                  <div className="absolute left-0 right-0 top-full mt-1 bg-charcoal-medium border border-charcoal-light rounded-xl shadow-2xl z-50 overflow-hidden max-h-60 overflow-y-auto">
+                                    {weatherSearchResults.map((loc, idx) => (
+                                      <button
+                                        key={idx}
+                                        type="button"
+                                        onClick={() => {
+                                          setWeatherSelectedCity(loc);
+                                          setWeatherSearchResults([]);
+                                          setWeatherSearchQuery('');
+                                        }}
+                                        className="w-full text-left px-4 py-3 hover:bg-charcoal-light text-xs text-foreground/80 hover:text-foreground cursor-pointer transition-colors border-b border-charcoal-light/35 last:border-b-0 flex flex-col gap-0.5"
+                                      >
+                                        <span className="font-semibold text-foreground">
+                                          {loc.name}
+                                        </span>
+                                        <span className="text-[10px] text-foreground/45">
+                                          {loc.admin1 ? `${loc.admin1}, ` : ''}{loc.country}
+                                        </span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-between p-3.5 bg-charcoal-dark/40 border border-charcoal-light/50 rounded-xl">
+                                <div className="space-y-0.5">
+                                  <span className="text-xs font-semibold text-foreground">
+                                    {weatherSelectedCity.name}
+                                  </span>
+                                  <p className="text-[10px] text-foreground/45 font-light leading-snug">
+                                    {weatherSelectedCity.admin1 ? `${weatherSelectedCity.admin1}, ` : ''}
+                                    {weatherSelectedCity.country}
+                                  </p>
+                                  <p className="text-[9px] text-foreground/30 font-mono">
+                                    Lat: {weatherSelectedCity.latitude.toFixed(4)} / Lon: {weatherSelectedCity.longitude.toFixed(4)}
+                                  </p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => setWeatherSelectedCity(null)}
+                                  className="px-2.5 py-1 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light/60 rounded-lg text-[10px] font-semibold text-foreground/70 hover:text-foreground transition-all cursor-pointer"
+                                >
+                                  Change
+                                </button>
+                              </div>
+                            )}
+
+                            {weatherSearchError && (
+                              <p className="text-[10px] text-brand-magenta mt-1">{weatherSearchError}</p>
+                            )}
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                            {/* Metric Selector */}
+                            <div className="space-y-1.5">
+                              <label className="text-[9px] uppercase font-bold tracking-wider text-foreground/45 block">
+                                Weather Metric
+                              </label>
+                              <select
+                                value={weatherMetric}
+                                onChange={(e) => setWeatherMetric(e.target.value)}
+                                className="w-full px-3.5 py-2.5 bg-charcoal-dark border border-charcoal-light rounded-xl text-xs text-foreground/80 focus:outline-none transition-colors cursor-pointer"
+                              >
+                                <option value="temperature_2m_max">Daily Max Temperature (temperature_2m_max)</option>
+                                <option value="temperature_2m_min">Daily Min Temperature (temperature_2m_min)</option>
+                                <option value="precipitation_sum">Total Precipitation (precipitation_sum)</option>
+                                <option value="windspeed_10m_max">Max Wind Speed (windspeed_10m_max)</option>
+                              </select>
+                            </div>
+
+                            {/* Temperature Unit (displayed only when metric is a temperature) */}
+                            {(weatherMetric === 'temperature_2m_max' || weatherMetric === 'temperature_2m_min') && (
+                              <div className="space-y-1.5">
+                                <label className="text-[9px] uppercase font-bold tracking-wider text-foreground/45 block">
+                                  Temperature Unit
+                                </label>
+                                <div className="flex gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => setWeatherTempUnit('celsius')}
+                                    className={`flex-1 py-2 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                                      weatherTempUnit === 'celsius'
+                                        ? 'bg-brand-gold text-charcoal-dark border-brand-gold'
+                                        : 'bg-charcoal-dark/50 border-charcoal-light/30 text-foreground/60 hover:text-foreground'
+                                    }`}
+                                  >
+                                    Celsius (°C)
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setWeatherTempUnit('fahrenheit')}
+                                    className={`flex-1 py-2 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                                      weatherTempUnit === 'fahrenheit'
+                                        ? 'bg-brand-gold text-charcoal-dark border-brand-gold'
+                                        : 'bg-charcoal-dark/50 border-charcoal-light/30 text-foreground/60 hover:text-foreground'
+                                    }`}
+                                  >
+                                    Fahrenheit (°F)
+                                  </button>
+                                </div>
                               </div>
                             )}
                           </div>
 
-                          {/* Coordinates inputs for custom coordinates in Open-Meteo */}
-                          {weatherApi === 'open-meteo' && (
-                            <div className="space-y-3">
-                              {weatherCity === 'custom' && (
-                                <div className="grid grid-cols-2 gap-3">
-                                  <div className="space-y-1">
-                                    <label className="text-[9px] uppercase font-bold tracking-wider text-foreground/45 block">
-                                      Latitude
-                                    </label>
-                                    <input
-                                      type="number"
-                                      step="0.0001"
-                                      placeholder="e.g. 40.7128"
-                                      value={weatherLat}
-                                      onChange={(e) => setWeatherLat(e.target.value)}
-                                      className="w-full px-3 py-2 bg-charcoal-dark border border-charcoal-light focus:border-foreground/15 rounded-lg text-xs text-foreground focus:outline-none transition-colors"
-                                    />
-                                  </div>
-                                  <div className="space-y-1">
-                                    <label className="text-[9px] uppercase font-bold tracking-wider text-foreground/45 block">
-                                      Longitude
-                                    </label>
-                                    <input
-                                      type="number"
-                                      step="0.0001"
-                                      placeholder="e.g. -74.0060"
-                                      value={weatherLng}
-                                      onChange={(e) => setWeatherLng(e.target.value)}
-                                      className="w-full px-3 py-2 bg-charcoal-dark border border-charcoal-light focus:border-foreground/15 rounded-lg text-xs text-foreground focus:outline-none transition-colors"
-                                    />
-                                  </div>
-                                </div>
-                              )}
-
-                              {/* Metric Selector */}
-                              <div className="space-y-1.5">
-                                <label className="text-[9px] uppercase font-bold tracking-wider text-foreground/45 block">
-                                  Weather Metric
-                                </label>
-                                <select
-                                  value={weatherMetric}
-                                  onChange={(e) => setWeatherMetric(e.target.value)}
-                                  className="w-full px-3 py-2 bg-charcoal-dark border border-charcoal-light rounded-lg text-xs text-foreground/80 focus:outline-none transition-colors cursor-pointer"
-                                >
-                                  <option value="temperature_2m" className="text-foreground bg-charcoal-medium">Temperature (temperature_2m)</option>
-                                  <option value="precipitation" className="text-foreground bg-charcoal-medium">Precipitation (precipitation)</option>
-                                  <option value="wind_speed_10m" className="text-foreground bg-charcoal-medium">Wind Speed (wind_speed_10m)</option>
-                                </select>
-                              </div>
-                            </div>
-                          )}
-
                           <button
                             type="button"
                             onClick={() => {
-                              if (weatherApi === 'open-meteo') {
-                                const lat = weatherLat.trim();
-                                const lng = weatherLng.trim();
-                                if (!lat || !lng || isNaN(parseFloat(lat)) || isNaN(parseFloat(lng))) {
-                                  setValidationError('Valid coordinates are required to build Open-Meteo URL');
-                                  return;
-                                }
-                                handleAddPreset(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=${weatherMetric}`);
-                              } else {
-                                const station = weatherStation.trim();
-                                if (!station) {
-                                  setValidationError('NWS Station code is required');
-                                  return;
-                                }
-                                handleAddPreset(`https://api.weather.gov/stations/${station}/observations/latest`);
+                              if (!weatherSelectedCity) {
+                                setValidationError('Please select a city first using the search box');
+                                return;
                               }
+                              const { latitude, longitude } = weatherSelectedCity;
+                              const isTemp = weatherMetric === 'temperature_2m_max' || weatherMetric === 'temperature_2m_min';
+                              const unitParam = isTemp ? `&temperature_unit=${weatherTempUnit}` : '';
+                              
+                              const urls = [
+                                `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&daily=${weatherMetric}${unitParam}&timezone=auto&models=gfs_seamless`,
+                                `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&daily=${weatherMetric}${unitParam}&timezone=auto&models=ecmwf_ifs025`,
+                                `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&daily=${weatherMetric}${unitParam}&timezone=auto&models=icon_seamless`
+                              ];
+                              
+                              handleAddWeatherUrls(urls);
                             }}
-                            className="w-full py-2 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light text-xs font-semibold text-foreground rounded-xl transition-all cursor-pointer shadow-sm"
+                            className="w-full py-2.5 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light text-xs font-semibold text-foreground rounded-xl transition-all cursor-pointer shadow-sm"
                           >
-                            Add Generated Weather URL
+                            Add Generated Weather URLs
                           </button>
                         </div>
                       </div>
