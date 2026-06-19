@@ -694,8 +694,9 @@ export default function PoolDetailDrawer() {
     }
   }
 
-  // Safety default: only allow claiming if finalization is positively confirmed
-  const isFinalized = resolutionTx?.status === 'finalized';
+  // Gating must permit claiming when the resolution transaction is not tracked in the
+  // client's local session, ensuring that returning winners can claim.
+  const isFinalized = !resolutionTx || resolutionTx.status === 'finalized';
 
   // Compute finalization time estimate (ETA) based on transaction progress
   const getEtaText = () => {
