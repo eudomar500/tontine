@@ -21,10 +21,10 @@ export default function Home() {
         <section id="explore" className="w-full max-w-7xl mx-auto px-6 sm:px-8 py-24 border-t border-charcoal-light/25 flex flex-col items-center relative z-20">
           <div className="text-center mb-16 animate-fade-in-up" style={{ animationDelay: '150ms', animationFillMode: 'both' }}>
             <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground mb-4">
-              Explore Prediction Pools
+              Explore Prediction Events
             </h2>
             <p className="text-sm sm:text-base text-foreground/50 max-w-xl mx-auto font-light leading-relaxed">
-              Find and track active and settled peer-to-peer prediction pools resolved by GenLayer LLM consensus on the Bradbury testnet.
+              Find and track active and settled peer-to-peer prediction events resolved by GenLayer LLM consensus on the Bradbury testnet.
             </p>
           </div>
           <PoolExplorer />

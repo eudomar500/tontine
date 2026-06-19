@@ -45,10 +45,10 @@ export const usePoolsStore = create<PoolsState>((set) => ({
 
       set({ pools: loadedPools, isLoading: false });
     } catch (err: any) {
-      console.error('Error loading prediction pools:', err);
+      console.error('Error loading prediction events:', err);
       set({
         isLoading: false,
-        error: err?.message || 'Failed to load pools from contract',
+        error: err?.message || 'Failed to load events from contract',
       });
     }
   },

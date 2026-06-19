@@ -170,7 +170,7 @@ export default function Hero() {
         >
           <TiltCard
             number="01"
-            title="Whitelisted Pools"
+            title="Whitelisted Events"
             description="Open private agreements by inviting a fixed list of participating wallets. Security and confidentiality without middlemen."
           />
 
@@ -183,7 +183,7 @@ export default function Hero() {
           <TiltCard
             number="03"
             title="LLM Consensus"
-            description="Upon pool maturity, GenLayer LLM consensus processes web sources and splits the pooled pot pro-rata among winning outcomes."
+            description="Upon event maturity, GenLayer LLM consensus processes web sources and splits the pooled pot pro-rata among winning outcomes."
           />
         </div>
       </div>

@@ -3,6 +3,7 @@
 import React from 'react';
 import Avatar from 'boring-avatars';
 import { PoolSummary, weiToGen, stateLabel, truncateAddress, timeRemaining } from '../services/contract';
+import { useThemeStore } from '../store/theme';
 
 interface PoolCardProps {
   pool: PoolSummary;
@@ -10,6 +11,7 @@ interface PoolCardProps {
 }
 
 export default function PoolCard({ pool, isActive = true }: PoolCardProps) {
+  const theme = useThemeStore((state) => state.theme);
   const totals = pool.outcome_totals.map((t) => BigInt(t));
   const totalStake = totals.reduce((a, b) => a + b, 0n);
 
@@ -68,8 +70,14 @@ export default function PoolCard({ pool, isActive = true }: PoolCardProps) {
       {/* Top Header Section */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase">
-            Pool #{pool.pool_id}
+          <span
+            className="text-xs font-semibold tracking-widest uppercase"
+            style={{
+              color: theme === 'dark' ? '#9FFF3C' : '#478A00',
+              textShadow: theme === 'dark' ? '0 0 8px rgba(159, 255, 60, 0.4)' : '0 0 8px rgba(71, 138, 0, 0.25)',
+            }}
+          >
+            Event #{pool.pool_id}
           </span>
           {pool.category && pool.category.trim() !== '' && (
             <span className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-charcoal-light/30 text-foreground/60 border border-charcoal-light/20 uppercase tracking-wider">
@@ -146,10 +154,10 @@ export default function PoolCard({ pool, isActive = true }: PoolCardProps) {
           </div>
         </div>
 
-        {/* Highlighted Total Pool Section */}
+        {/* Highlighted Total Event Section */}
         <div className="bg-charcoal-dark/20 dark:bg-charcoal-dark/40 border border-charcoal-light/25 rounded-xl p-3.5 flex justify-between items-center mb-6">
           <span className="text-xs text-foreground/50 font-medium">
-            Total Pool Amount
+            Total Event Amount
           </span>
           <span className="text-lg font-bold text-foreground tracking-tight">
             {weiToGen(pool.total_pool)} GEN

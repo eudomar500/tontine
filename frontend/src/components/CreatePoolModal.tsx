@@ -546,10 +546,10 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
           <div className="flex items-center justify-between p-5 border-b border-charcoal-light bg-charcoal-dark/20">
             <div>
               <h3 className="text-sm font-semibold text-foreground tracking-wide uppercase font-display">
-                Create Prediction Pool
+                Create Prediction Event
               </h3>
               <p className="text-[11px] text-foreground/45 mt-0.5 font-light">
-                Launch a private agreement pool resolved by decentralized LLM consensus on GenLayer Bradbury.
+                Launch a private agreement event resolved by decentralized LLM consensus on GenLayer Bradbury.
               </p>
             </div>
             <button
@@ -640,7 +640,7 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
                         </span>
                       </div>
                       <p className="text-xs text-foreground/50 leading-relaxed font-light">
-                        Your pool creation transaction has been accepted by GenLayer validator consensus. Bradbury finality takes 25 to 40 minutes. You can close this form now, and the pool will display once finalized.
+                        Your event creation transaction has been accepted by GenLayer validator consensus. Bradbury finality takes 25 to 40 minutes. You can close this form now, and the event will display once finalized.
                       </p>
                       {txHash && (
                         <div className="text-[11px] font-mono text-foreground/50 truncate flex items-center justify-between bg-charcoal-dark/50 border border-charcoal-light/10 px-2 py-1.5 rounded-lg select-all">
@@ -724,7 +724,7 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
                 {!connectedAddress && (
                   <div className="p-4 bg-charcoal-medium/20 border border-charcoal-light/20 rounded-xl flex flex-col items-center text-center space-y-3">
                     <p className="text-xs text-foreground/60 leading-relaxed font-light">
-                      Connect your wallet to configure and launch a prediction pool.
+                      Connect your wallet to configure and launch a prediction event.
                     </p>
                     <button
                       onClick={() => setWalletModalOpen(true)}
@@ -1495,7 +1495,7 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
                 disabled={!connectedAddress || isFeeLoading || creationFee === null}
                 className="px-4 py-2 bg-brand-gold hover:bg-brand-gold/90 disabled:bg-charcoal-light disabled:text-foreground/20 disabled:border-charcoal-light text-charcoal-dark border border-brand-gold rounded-xl text-xs font-semibold transition-all cursor-pointer"
               >
-                Create Pool
+                Create Event
               </button>
             )}
           </div>
@@ -1508,11 +1508,11 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
           isOpen={isConfirmOpen}
           onClose={() => setIsConfirmOpen(false)}
           onConfirm={handleConfirmCreate}
-          title="Confirm Agreement Pool Creation"
+          title="Confirm Agreement Event Creation"
         >
           <div className="space-y-4">
             <p className="text-xs text-foreground/70 font-light leading-relaxed">
-              Please carefully review the prediction pool parameters before signing the deployment transaction in your wallet:
+              Please carefully review the prediction event parameters before signing the deployment transaction in your wallet:
             </p>
             <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-3">
               <div className="space-y-1">
@@ -1567,7 +1567,7 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
               </div>
             </div>
             <p className="text-[11px] text-foreground/45 italic leading-snug">
-              Creating a pool is final. Pool parameters cannot be modified once submitted. Bradbury finality requires 25 to 40 minutes.
+              Creating an event is final. Event parameters cannot be modified once submitted. Bradbury finality requires 25 to 40 minutes.
             </p>
           </div>
         </ConfirmModal>

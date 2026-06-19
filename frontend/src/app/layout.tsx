@@ -14,8 +14,8 @@ const spaceGrotesk = Space_Grotesk({
 });
 
 export const metadata: Metadata = {
-  title: "tontine - Private Peer-to-Peer Agreement Pools",
-  description: "Create private peer-to-peer agreement pools on GenLayer, resolved by decentralized LLM consensus over public web sources.",
+  title: "tontine - Private Peer-to-Peer Agreement Events",
+  description: "Create private peer-to-peer agreement events on GenLayer, resolved by decentralized LLM consensus over public web sources.",
 };
 
 export default function RootLayout({

@@ -192,7 +192,7 @@ export default function PoolExplorer() {
           </div>
         </div>
         <h4 className="text-lg font-bold text-foreground mb-2">
-          Unable to Load Prediction Pools
+          Unable to Load Prediction Events
         </h4>
         <p className="text-sm text-foreground/50 leading-relaxed mb-6 font-light">
           We encountered an issue reading from the Bradbury contract. The network might be congested.
@@ -228,7 +228,7 @@ export default function PoolExplorer() {
                 : 'rounded-xl bg-charcoal-medium/40 hover:bg-charcoal-medium border-charcoal-light/30 text-foreground/60 hover:text-foreground'
             }`}
           >
-            My Pools
+            My Events
             {viewMode === 'mine' && (
               <div 
                 className="border-beam-container" 
@@ -267,7 +267,7 @@ export default function PoolExplorer() {
           {pendingCreateTx && (
             <div className="flex items-center gap-2 px-3.5 py-2 bg-brand-gold/10 border border-brand-gold/25 rounded-xl animate-pulse text-[11px] font-semibold text-brand-gold">
               <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-              <span>Creating pool...</span>
+              <span>Creating event...</span>
               <a
                 href={`https://explorer-bradbury.genlayer.com/tx/${pendingCreateTx.hash}`}
                 target="_blank"
@@ -283,7 +283,7 @@ export default function PoolExplorer() {
             onClick={() => setIsCreateModalOpen(true)}
             className="relative overflow-hidden px-5 py-2 flex items-center gap-1.5 bg-brand-gold/10 hover:bg-brand-gold/20 border border-brand-gold/30 text-brand-gold text-xs font-bold rounded-xl transition-all cursor-pointer font-display tracking-wider uppercase shadow-md shrink-0"
           >
-            Create Pool
+            Create Event
             <div 
               className="border-beam-container" 
               style={{
@@ -325,17 +325,17 @@ export default function PoolExplorer() {
             </div>
           </div>
           <h4 className="text-lg font-bold text-foreground mb-2">
-            No Active Pools Found
+            No Active Events Found
           </h4>
           <p className="text-sm text-foreground/50 leading-relaxed font-light mb-6">
-            There are currently no prediction pools registered on the live Bradbury contract.
+            There are currently no prediction events registered on the live Bradbury contract.
           </p>
           <div className="flex items-center justify-center gap-3">
             <button
               onClick={() => setIsCreateModalOpen(true)}
               className="px-5 py-2.5 bg-brand-gold hover:bg-brand-gold/90 text-charcoal-dark text-xs font-bold rounded-xl transition-all cursor-pointer font-display tracking-wider uppercase shadow-md"
             >
-              Create Pool
+              Create Event
             </button>
             <button
               onClick={loadPools}
@@ -355,19 +355,19 @@ export default function PoolExplorer() {
             </div>
           </div>
           <h4 className="text-lg font-bold text-foreground mb-2">
-            {viewMode === 'mine' ? 'No Agreements Found' : 'No Pools in Category'}
+            {viewMode === 'mine' ? 'No Agreements Found' : 'No Events in Category'}
           </h4>
           <p className="text-sm text-foreground/50 leading-relaxed font-light mb-6">
             {viewMode === 'mine'
-              ? 'You have not created or participated in any pools yet.'
-              : `There are currently no active prediction pools in the "${selectedCategory}" category.`}
+              ? 'You have not created or participated in any events yet.'
+              : `There are currently no active prediction events in the "${selectedCategory}" category.`}
           </p>
           {viewMode === 'mine' ? (
             <button
               onClick={() => setViewMode('all')}
               className="px-5 py-2.5 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light rounded-xl text-sm font-semibold text-foreground transition-all cursor-pointer mx-auto"
             >
-              Show All Pools
+              Show All Events
             </button>
           ) : (
             <button
@@ -419,7 +419,7 @@ export default function PoolExplorer() {
               <button
                 onClick={handlePrev}
                 className="p-3 bg-charcoal-medium hover:bg-charcoal-light border border-charcoal-light/30 rounded-full text-foreground/75 hover:text-foreground transition-all shadow-md cursor-pointer"
-                title="Previous prediction pool"
+                title="Previous prediction event"
               >
                 <ChevronLeft className="w-5 h-5" />
               </button>
@@ -431,7 +431,7 @@ export default function PoolExplorer() {
               <button
                 onClick={handleNext}
                 className="p-3 bg-charcoal-medium hover:bg-charcoal-light border border-charcoal-light/30 rounded-full text-foreground/75 hover:text-foreground transition-all shadow-md cursor-pointer"
-                title="Next prediction pool"
+                title="Next prediction event"
               >
                 <ChevronRight className="w-5 h-5" />
               </button>

@@ -859,7 +859,7 @@ export default function PoolDetailDrawer() {
           <div className="flex flex-col gap-1.5">
             <div className="flex items-center gap-2">
               <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase">
-                Pool #{selectedPoolId}
+                Event #{selectedPoolId}
               </span>
               {pool?.category && pool.category.trim() !== '' && (
                 <span className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-charcoal-light/30 text-foreground/60 border border-charcoal-light/20 uppercase tracking-wider">
@@ -889,7 +889,7 @@ export default function PoolDetailDrawer() {
           {isLoading && (
             <div className="flex flex-col items-center justify-center py-24 gap-3">
               <Loader2 className="w-8 h-8 text-brand-gold animate-spin" />
-              <span className="text-sm text-foreground/50 font-light">Loading pool details...</span>
+              <span className="text-sm text-foreground/50 font-light">Loading event details...</span>
             </div>
           )}
 
@@ -1283,7 +1283,7 @@ export default function PoolDetailDrawer() {
                       pendingResolutionTx ? (
                         <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
                           <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
-                            Pool Resolution
+                            Event Resolution
                           </span>
                           <p className="text-xs text-foreground/60 leading-relaxed font-light">
                             Resolution requested, processing on Bradbury.
@@ -1312,10 +1312,10 @@ export default function PoolDetailDrawer() {
                         // Resolution Action Panel
                         <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
                           <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
-                            Pool Resolution
+                            Event Resolution
                           </span>
                           <p className="text-xs text-foreground/60 leading-relaxed font-light">
-                            The resolution deadline has passed. As a whitelisted participant, you can trigger the GenLayer LLM oracle to resolve this pool.
+                            The resolution deadline has passed. As a whitelisted participant, you can trigger the GenLayer LLM oracle to resolve this event.
                           </p>
                           <button
                             type="button"
@@ -1425,7 +1425,7 @@ export default function PoolDetailDrawer() {
                         onClick={handleJoinClick}
                         className="w-full py-3 bg-foreground hover:bg-warm-white text-background font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm"
                       >
-                        Join Pool
+                        Join Event
                       </button>
                     </div>
                   ) : (
@@ -1508,7 +1508,7 @@ export default function PoolDetailDrawer() {
                           onClick={handleCancelClick}
                           className="w-full py-3 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light/30 text-foreground/80 hover:text-foreground font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm mt-2"
                         >
-                          Cancel Pool
+                          Cancel Event
                         </button>
                       )}
                     </div>
@@ -1517,7 +1517,7 @@ export default function PoolDetailDrawer() {
                   // State 1: RESOLVING
                   <div className="p-5 bg-brand-gold/5 border border-brand-gold/15 rounded-2xl flex flex-col items-center text-center space-y-3">
                     <Loader2 className="w-6 h-6 text-brand-gold animate-spin" />
-                    <h5 className="text-xs font-bold text-brand-gold uppercase tracking-wider">Resolving Pool</h5>
+                    <h5 className="text-xs font-bold text-brand-gold uppercase tracking-wider">Resolving Event</h5>
                     <p className="text-[11px] text-foreground/60 leading-relaxed font-light">
                       The GenLayer LLM oracle is reading resolution sources to achieve consensus. This process can take several minutes.
                     </p>
@@ -1858,7 +1858,7 @@ export default function PoolDetailDrawer() {
               : activeAction === 'claim_refund'
               ? 'Confirm Refund Claim'
               : activeAction === 'cancel'
-              ? 'Confirm Cancel Pool'
+              ? 'Confirm Cancel Event'
               : 'Confirm Staking Action'
           }
         >
@@ -1867,7 +1867,7 @@ export default function PoolDetailDrawer() {
               <p className="mb-3">Please review the details below before signing the transaction in your wallet:</p>
               <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-2.5 mb-4">
                 <div className="flex justify-between text-xs">
-                  <span className="text-foreground/45">Pool ID</span>
+                  <span className="text-foreground/45">Event ID</span>
                   <span className="font-semibold text-foreground font-mono">#{pool.pool_id}</span>
                 </div>
                 <div className="flex justify-between text-xs">
@@ -1876,7 +1876,7 @@ export default function PoolDetailDrawer() {
                 </div>
               </div>
               <p className="text-xs text-foreground/75 mb-3 leading-relaxed">
-                This will trigger the consensus of the GenLayer LLM oracle to read the verification sources and decide the winning outcome of this prediction pool.
+                This will trigger the consensus of the GenLayer LLM oracle to read the verification sources and decide the winning outcome of this prediction event.
               </p>
               <p className="text-[11px] text-foreground/45 italic leading-snug">
                 This process involves fetching web resources, processing LLM queries, and reaching consensus. It can take several minutes to complete on-chain.
@@ -1887,7 +1887,7 @@ export default function PoolDetailDrawer() {
               <p className="mb-3">Please review the details below before signing the transaction in your wallet:</p>
               <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-2.5 mb-4">
                 <div className="flex justify-between text-xs">
-                  <span className="text-foreground/45">Pool ID</span>
+                  <span className="text-foreground/45">Event ID</span>
                   <span className="font-semibold text-foreground font-mono">#{pool.pool_id}</span>
                 </div>
                 <div className="flex justify-between text-xs">
@@ -1896,7 +1896,7 @@ export default function PoolDetailDrawer() {
                 </div>
               </div>
               <p className="text-xs text-foreground/75 mb-3 leading-relaxed">
-                This will trigger a force refund for this pool, moving it to the Refunded state because the timeout deadline has passed.
+                This will trigger a force refund for this event, moving it to the Refunded state because the timeout deadline has passed.
               </p>
               <p className="text-[11px] text-foreground/45 italic leading-snug">
                 Transactions on GenLayer Bradbury have a finality window of 25 to 40 minutes.
@@ -1907,7 +1907,7 @@ export default function PoolDetailDrawer() {
               <p className="mb-3">Please review the details below before signing the transaction in your wallet:</p>
               <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-2.5 mb-4">
                 <div className="flex justify-between text-xs">
-                  <span className="text-foreground/45">Pool ID</span>
+                  <span className="text-foreground/45">Event ID</span>
                   <span className="font-semibold text-foreground font-mono">#{pool.pool_id}</span>
                 </div>
                 <div className="flex justify-between text-xs">
@@ -1926,7 +1926,7 @@ export default function PoolDetailDrawer() {
               <p className="mb-3">Please review the details below before signing the transaction in your wallet:</p>
               <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-2.5 mb-4">
                 <div className="flex justify-between text-xs">
-                  <span className="text-foreground/45">Pool ID</span>
+                  <span className="text-foreground/45">Event ID</span>
                   <span className="font-semibold text-foreground font-mono">#{pool.pool_id}</span>
                 </div>
                 <div className="flex justify-between text-xs">
@@ -1957,16 +1957,16 @@ export default function PoolDetailDrawer() {
               <p className="mb-3">Please review the details below before signing the transaction in your wallet:</p>
               <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-2.5 mb-4">
                 <div className="flex justify-between text-xs">
-                  <span className="text-foreground/45">Pool ID</span>
+                  <span className="text-foreground/45">Event ID</span>
                   <span className="font-semibold text-foreground font-mono">#{pool.pool_id}</span>
                 </div>
                 <div className="flex justify-between text-xs">
                   <span className="text-foreground/45">Action</span>
-                  <span className="font-semibold text-brand-gold font-display uppercase font-bold text-sm">Cancel Pool</span>
+                  <span className="font-semibold text-brand-gold font-display uppercase font-bold text-sm">Cancel Event</span>
                 </div>
               </div>
               <p className="text-xs text-foreground/75 mb-3 leading-relaxed">
-                This will cancel the agreement pool. The pool state will transition to Refunded, and you can recover your stake.
+                This will cancel the agreement event. The event state will transition to Refunded, and you can recover your stake.
               </p>
               <p className="text-[11px] text-foreground/45 italic leading-snug">
                 Note: The creation fee is non-refundable. Transactions on GenLayer Bradbury have a finality window of 25 to 40 minutes.
@@ -1977,7 +1977,7 @@ export default function PoolDetailDrawer() {
               <p className="mb-3">Please review the details below before signing the transaction in your wallet:</p>
               <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-2.5 mb-4">
                 <div className="flex justify-between text-xs">
-                  <span className="text-foreground/45">Pool ID</span>
+                  <span className="text-foreground/45">Event ID</span>
                   <span className="font-semibold text-foreground font-mono">#{pool.pool_id}</span>
                 </div>
                 <div className="flex justify-between text-xs">
