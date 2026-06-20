@@ -23,6 +23,8 @@ def test_deploy_and_create():
 
     assert int(contract.get_creation_fee(args=[]).call()) == CREATION_FEE
 
+    # Pass a category and a name so the optional name field round trips through
+    # real consensus, not just the permissive direct harness.
     receipt = contract.create_pool(
         args=[
             "Who wins?",
@@ -32,7 +34,12 @@ def test_deploy_and_create():
             HOUR,
             2 * HOUR,
             0,
+            "",
+            "Friday Night",
         ],
     ).transact(value=MIN_STAKE + CREATION_FEE)
     assert tx_execution_succeeded(receipt)
     assert int(contract.get_pool_count(args=[]).call()) == 1
+
+    pool = contract.get_pool(args=[1]).call()
+    assert pool["name"] == "Friday Night"

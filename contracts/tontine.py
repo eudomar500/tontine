@@ -77,6 +77,10 @@ class Pool:
     # Free-text label for frontend filtering and grouping; no economic effect.
     category: str
 
+    # Optional cosmetic room identifier rendered as "Room: {name}"; no economic
+    # effect. Empty is valid and renders without the prefix.
+    name: str
+
 
 @allow_storage
 @dataclass
@@ -102,6 +106,7 @@ class PoolSummary:
     winning_outcome_index: u8
     participant_count: u256
     category: str
+    name: str
 
 
 @dataclass
@@ -141,14 +146,6 @@ class KillswitchStatus:
     dead_man_triggers_at: u256
 
 
-@dataclass
-class UpgradeInfo:
-    has_pending: bool
-    code_hash: bytes
-    description: str
-    apply_after: u256
-
-
 MIN_OUTCOMES = 2
 MAX_OUTCOMES = 10
 MIN_SOURCES = 2
@@ -162,6 +159,7 @@ MAX_POOL_DURATION = u256(7776000)
 TIMEOUT_BUFFER = u256(86400)
 MAX_TERMS_LEN = 2000
 MAX_LABEL_LEN = 500
+MAX_NAME_LEN = 64
 MAX_POOLS_PER_WALLET = 1000
 
 INITIAL_CREATION_FEE = u256(10 ** 18)
@@ -170,12 +168,13 @@ MAX_FETCH_CHARS = 5000
 
 DEADMAN_PERIOD = u256(7776000)
 KILLSWITCH_WINDOW = u256(604800)
-UPGRADE_TIMELOCK = u256(172800)
+TIMELOCK_PERIOD = u256(172800)
 ADMIN_TRANSFER_WINDOW = u256(604800)
 
-# Surfaced on-chain via get_contract_info so an applied code upgrade is
-# verifiable without reading bytecode. The live deployment carried no version
-# constant, so this upgrade is version 2.
+# Identifies which deployed build is live. The contract is immutable after
+# deployment on Bradbury, so there is no in-place upgrade; each redeploy bumps
+# this and get_contract_info surfaces it on-chain. The original 0x2F83 build
+# carried no version, this redeploy is version 2.
 CONTRACT_VERSION = u256(2)
 
 CONFIDENCE_THRESHOLD = 70
@@ -215,10 +214,6 @@ class Tontine(gl.Contract):
     killswitch_active: bool
     killswitch_activated_at: u256
 
-    pending_code: bytes
-    pending_code_description: str
-    pending_code_deadline: u256
-
     pools_by_id: TreeMap[u256, Pool]
     next_pool_id: u256
 
@@ -255,10 +250,6 @@ class Tontine(gl.Contract):
 
         self.killswitch_active = False
         self.killswitch_activated_at = u256(0)
-
-        self.pending_code = b""
-        self.pending_code_description = ""
-        self.pending_code_deadline = u256(0)
 
         self.next_pool_id = u256(1)
 
@@ -314,6 +305,7 @@ class Tontine(gl.Contract):
         resolution_deadline_offset: u256,
         creator_outcome_index: u8,
         category: str = "",
+        name: str = "",
     ) -> u256:
         # The killswitch always sets paused, so the pause guard already blocks
         # creation while it is active; a separate killswitch guard would be dead.
@@ -384,6 +376,12 @@ class Tontine(gl.Contract):
         if len(category) > MAX_LABEL_LEN:
             raise gl.vm.UserError("category too long")
 
+        # Optional cosmetic room identifier; empty is allowed, only bound the
+        # length. Kept permissive on purpose since the contract is immutable
+        # post-deploy; any "name required" policy is enforced in the frontend.
+        if len(name) > MAX_NAME_LEN:
+            raise gl.vm.UserError("name too long")
+
         value = gl.message.value
         if value < self.creation_fee:
             raise gl.vm.UserError("insufficient value: need stake plus creation fee")
@@ -429,6 +427,7 @@ class Tontine(gl.Contract):
             resolution_evidence="",
             refund_reason=RefundReason.NONE,
             category=category,
+            name=name,
         )
         self.pools_by_id[pool_id] = pool
 
@@ -763,7 +762,7 @@ class Tontine(gl.Contract):
         if new_fee > self.max_creation_fee:
             raise gl.vm.UserError("fee exceeds cap")
         self.pending_creation_fee = new_fee
-        self.pending_creation_fee_deadline = _now() + UPGRADE_TIMELOCK
+        self.pending_creation_fee_deadline = _now() + TIMELOCK_PERIOD
 
     @gl.public.write
     def apply_creation_fee_change(self):
@@ -781,7 +780,7 @@ class Tontine(gl.Contract):
         if new_collector == Address(b"\x00" * 20):
             raise gl.vm.UserError("invalid collector")
         self.pending_fee_collector = new_collector
-        self.pending_fee_collector_deadline = _now() + UPGRADE_TIMELOCK
+        self.pending_fee_collector_deadline = _now() + TIMELOCK_PERIOD
 
     @gl.public.write
     def apply_fee_collector_change(self):
@@ -841,31 +840,6 @@ class Tontine(gl.Contract):
         pool.state = PoolState.REFUNDED
         pool.refund_reason = RefundReason.BLOCKED_BY_ADMIN
 
-    @gl.public.write
-    def propose_code_upgrade(self, new_code: bytes, description: str):
-        self._require_admin()
-        if len(new_code) == 0:
-            raise gl.vm.UserError("empty code")
-        self.pending_code = new_code
-        self.pending_code_description = description
-        self.pending_code_deadline = _now() + UPGRADE_TIMELOCK
-
-    @gl.public.write
-    def apply_code_upgrade(self):
-        self._require_admin()
-        if self.pending_code_deadline == u256(0):
-            raise gl.vm.UserError("no pending upgrade")
-        if _now() < self.pending_code_deadline:
-            raise gl.vm.UserError("timelock not elapsed")
-        # Swap the running bytecode in place: the contract's code lives in the
-        # root storage slot, so truncating and rewriting it replaces this contract.
-        code = gl.storage.Root.get().code.get()
-        code.truncate()
-        code.extend(self.pending_code)
-        self.pending_code = b""
-        self.pending_code_description = ""
-        self.pending_code_deadline = u256(0)
-
     @gl.public.view
     def get_pool(self, pool_id: u256) -> Pool:
         return self._get_pool(pool_id)
@@ -894,6 +868,7 @@ class Tontine(gl.Contract):
             winning_outcome_index=pool.winning_outcome_index,
             participant_count=participants,
             category=pool.category,
+            name=pool.name,
         )
 
     @gl.public.view
@@ -975,17 +950,6 @@ class Tontine(gl.Contract):
     @gl.public.view
     def get_contract_info(self) -> u256:
         return CONTRACT_VERSION
-
-    @gl.public.view
-    def get_pending_upgrade_info(self) -> UpgradeInfo:
-        # Expose a digest rather than the full pending bytecode, which can be large.
-        code_hash = Keccak256(self.pending_code).digest() if len(self.pending_code) > 0 else b""
-        return UpgradeInfo(
-            has_pending=self.pending_code_deadline != u256(0),
-            code_hash=code_hash,
-            description=self.pending_code_description,
-            apply_after=self.pending_code_deadline,
-        )
 
     @gl.public.view
     def get_creation_fee(self) -> u256:

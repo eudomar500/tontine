@@ -192,6 +192,8 @@ def create_pool(contract, vm, creator, value=None, **overrides):
         args["join_deadline_offset"],
         args["resolution_deadline_offset"],
         args["creator_outcome_index"],
+        args.get("category", ""),
+        args.get("name", ""),
     )
     return int(pid)
 
