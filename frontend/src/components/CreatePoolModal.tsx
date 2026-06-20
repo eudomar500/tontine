@@ -67,6 +67,7 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
   const [creatorOutcomeIndex, setCreatorOutcomeIndex] = useState<number>(0);
   const [creatorStake, setCreatorStake] = useState<string>('');
   const [category, setCategory] = useState<string>('');
+  const [roomName, setRoomName] = useState<string>('');
 
   // Weather source builder states
   const [weatherSearchQuery, setWeatherSearchQuery] = useState<string>('');
@@ -243,6 +244,7 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
     setCreatorOutcomeIndex(0);
     setCreatorStake('');
     setCategory('');
+    setRoomName('');
     setWeatherSearchQuery('');
     setWeatherSearchResults([]);
     setWeatherSelectedCity(null);
@@ -468,6 +470,12 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
       return false;
     }
 
+    // Optional room name length validation
+    if (roomName.trim().length > 64) {
+      setValidationError('Room name cannot exceed 64 characters');
+      return false;
+    }
+
     setValidationError(null);
     return true;
   };
@@ -507,6 +515,7 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
           BigInt(resolutionOffset),
           creatorOutcomeIndex,
           (category || 'Other').trim(),
+          roomName.trim(),
         ],
         value: totalValueWei,
       });
@@ -969,6 +978,28 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
                         ))}
                         <option value="Other" className="text-foreground bg-charcoal-medium">Other</option>
                       </select>
+                    </div>
+
+                    {/* Room Name Input */}
+                    <div className="space-y-2">
+                      <label className="text-[10px] uppercase font-bold tracking-widest text-foreground/45 block">
+                        Room Name (Optional)
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. UEFA Champions League Final 2026"
+                        maxLength={64}
+                        value={roomName}
+                        onChange={(e) => {
+                          setRoomName(e.target.value);
+                          setValidationError(null);
+                        }}
+                        className="w-full px-3.5 py-2.5 bg-charcoal-dark border border-charcoal-light focus:border-foreground/15 rounded-xl text-xs text-foreground focus:outline-none transition-colors placeholder-foreground/20 font-semibold"
+                      />
+                      <div className="flex justify-between items-center text-[10px] text-foreground/45">
+                        <span>Max 64 characters</span>
+                        <span>{roomName.length}/64</span>
+                      </div>
                     </div>
 
                     {/* Curated Presets & Hints section */}
