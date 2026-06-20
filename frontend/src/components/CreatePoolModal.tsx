@@ -3,11 +3,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { X, Plus, Trash2, Loader2, AlertCircle, CheckCircle2, ExternalLink, HelpCircle } from 'lucide-react';
 import { useWalletStore } from '../store/wallet';
-import { useContractWrite } from '../hooks/useContractWrite';
+import { useTrackedContractWrite } from '../hooks/useTrackedContractWrite';
 import ConfirmModal from './ConfirmModal';
-import { getCreationFee, hexToBytes, CONTRACT_ADDRESS, weiToGen, CATEGORIES } from '../services/contract';
+import { getCreationFee, hexToBytes, CONTRACT_ADDRESS, weiToGen, CATEGORIES, getPoolCount } from '../services/contract';
 import { CalldataAddress } from 'genlayer-js/types';
 import { usePoolsStore } from '../store/pools';
+
 import { CURATED_PRESETS } from '../services/presets';
 
 interface WeatherLocation {
@@ -223,7 +224,9 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
     return () => clearTimeout(delayDebounce);
   }, [weatherSearchQuery]);
 
-  const { write, status: writeStatus, txHash, error: writeError, reset: resetWrite } = useContractWrite({
+  const [isSubmittingCreate, setIsSubmittingCreate] = useState<boolean>(false);
+
+  const { write, status: writeStatus, txHash, error: writeError, reset: resetWrite } = useTrackedContractWrite({
     onSuccess: () => {
       loadPools();
     },
@@ -502,7 +505,11 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
 
     const combinedTerms = `${terms.trim()} (Resolution reference: ${resolutionDate.trim()})`;
 
+    const createNonce = Date.now().toString() + Math.random().toString(36).substring(2, 9);
+
+    setIsSubmittingCreate(true);
     try {
+      const preCount = Number(await getPoolCount());
       await write({
         address: CONTRACT_ADDRESS,
         functionName: 'create_pool',
@@ -518,9 +525,14 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
           roomName.trim(),
         ],
         value: totalValueWei,
+        trackAction: 'create_pool',
+        trackTarget: createNonce,
+        trackMetadata: { preCreateCount: preCount },
       });
     } catch (err) {
       // Handled inside useContractWrite
+    } finally {
+      setIsSubmittingCreate(false);
     }
   };
 

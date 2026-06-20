@@ -10,6 +10,7 @@ export type WriteStatus = 'idle' | 'signing' | 'pending' | 'accepted' | 'finaliz
 interface UseContractWriteOptions {
   onSuccess?: (receipt: any) => void;
   onError?: (error: Error) => void;
+  onSubmitted?: (hash: string) => void;
 }
 
 export function useContractWrite(options?: UseContractWriteOptions) {
@@ -67,6 +68,9 @@ export function useContractWrite(options?: UseContractWriteOptions) {
         // Track transaction globally for floating NetworkStatus widget
         addTransaction(hash, false, params.poolId, params.functionName);
 
+        // Notify caller of initial transaction submission
+        options?.onSubmitted?.(hash);
+
         // Synchronously write localStorage markers on broadcast for resolution and refund actions
         if (params.poolId) {
           if (typeof window !== 'undefined') {
@@ -90,6 +94,11 @@ export function useContractWrite(options?: UseContractWriteOptions) {
             retries: 120, // 10 minutes timeout
             interval: 5000,
           });
+
+          // Reject if the transaction reverted to ensure failure falls to onError
+          if (receipt && (receipt.txExecutionResultName === 'FINISHED_WITH_ERROR' || receipt.txExecutionResult === 2)) {
+            throw new Error('Transaction execution reverted on-chain');
+          }
 
           setStatus('accepted');
           options?.onSuccess?.(receipt);
@@ -125,6 +134,10 @@ export function useContractWrite(options?: UseContractWriteOptions) {
                   retries: 300, // 25 minutes additional polling
                   interval: 5000,
                 });
+                // Reject if the transaction reverted during background execution to route failure to the onError handler
+                if (bgReceipt && (bgReceipt.txExecutionResultName === 'FINISHED_WITH_ERROR' || bgReceipt.txExecutionResult === 2)) {
+                  throw new Error('Transaction execution reverted on-chain');
+                }
                 setStatus('accepted');
                 options?.onSuccess?.(bgReceipt);
 
@@ -135,8 +148,12 @@ export function useContractWrite(options?: UseContractWriteOptions) {
                   interval: 5000,
                 });
                 setStatus('finalized');
-              } catch (bgErr) {
+              } catch (bgErr: any) {
                 console.warn(`Background poll failed for ${hash}:`, bgErr);
+                setStatus('error');
+                const formattedError = bgErr instanceof Error ? bgErr : new Error(bgErr?.message || String(bgErr));
+                setError(formattedError);
+                options?.onError?.(formattedError);
               }
             };
             pollInBackground();

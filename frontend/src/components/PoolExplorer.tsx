@@ -1,13 +1,14 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { ChevronLeft, ChevronRight, RefreshCw, AlertTriangle, HelpCircle, Loader2, ExternalLink } from 'lucide-react';
+import { ChevronLeft, ChevronRight, RefreshCw, AlertTriangle, HelpCircle, Loader2, ExternalLink, AlertCircle } from 'lucide-react';
 import { usePoolsStore, selectFilteredPools, selectCategories } from '../store/pools';
 import PoolCard from './PoolCard';
 import PoolDetailDrawer from './PoolDetailDrawer';
 import CreatePoolModal from './CreatePoolModal';
-import { useTxStore } from '../store/transactions';
 import { useWalletStore } from '../store/wallet';
+import { usePendingWritesStore } from '../store/pendingWrites';
+import { getPoolCount } from '../services/contract';
 
 export default function PoolExplorer() {
   const pools = usePoolsStore(selectFilteredPools);
@@ -31,24 +32,45 @@ export default function PoolExplorer() {
   const [isMobile, setIsMobile] = useState(false);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
 
-  const transactions = useTxStore((state) => state.transactions);
-  const removeTransaction = useTxStore((state) => state.removeTransaction);
+  const pendingWrites = usePendingWritesStore((state) => state.entries);
+  const removePendingWrite = usePendingWritesStore((state) => state.removePendingWrite);
+  const addPendingWrite = usePendingWritesStore((state) => state.addPendingWrite);
 
-  const pendingCreateTx = transactions.find(
-    (tx) => tx.action === 'create_pool' && tx.status !== 'finalized'
+  const pendingCreate = pendingWrites.find(
+    (entry) =>
+      entry.action === 'create_pool' &&
+      connectedAddress &&
+      entry.wallet === connectedAddress.toLowerCase()
   );
 
-  // Automatically clear create_pool transactions from the tracker when the pool list updates
-  useEffect(() => {
-    if (unfilteredPools.length > 0) {
-      const createTxs = transactions.filter(
-        (tx) => tx.action === 'create_pool' && (tx.status === 'accepted' || tx.status === 'finalized')
-      );
-      for (const tx of createTxs) {
-        removeTransaction(tx.hash);
+  const [isCheckingPending, setIsCheckingPending] = useState(false);
+
+  // Checks on-chain whether the pool count has increased to clear stale writes, resetting the TTL timer if not found
+  const handleCheckPendingCreateAgain = async () => {
+    if (!pendingCreate) return;
+    setIsCheckingPending(true);
+    try {
+      const currentCount = await getPoolCount();
+      const preCount = Number(pendingCreate.metadata?.preCreateCount || 0);
+      if (currentCount > preCount) {
+        removePendingWrite(pendingCreate.key);
+        loadPools().catch(() => {});
+      } else {
+        // Reset the submission timer to pending state and update timestamp to prevent immediate timeout re-trigger
+        addPendingWrite(
+          pendingCreate.wallet,
+          pendingCreate.action,
+          pendingCreate.target,
+          pendingCreate.txHash,
+          pendingCreate.metadata
+        );
       }
+    } catch (err) {
+      console.warn('Failed to manually check pending create state:', err);
+    } finally {
+      setIsCheckingPending(false);
     }
-  }, [unfilteredPools.length, transactions, removeTransaction]);
+  };
 
   // Load prediction pools from Bradbury contract on component mount
   useEffect(() => {
@@ -264,35 +286,74 @@ export default function PoolExplorer() {
         </div>
 
         <div className="flex items-center gap-3.5 shrink-0">
-          {pendingCreateTx && (
-            <div className="flex items-center gap-2 px-3.5 py-2 bg-brand-gold/10 border border-brand-gold/25 rounded-xl animate-pulse text-[11px] font-semibold text-brand-gold">
-              <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-              <span>Creating event...</span>
-              <a
-                href={`https://explorer-bradbury.genlayer.com/tx/${pendingCreateTx.hash}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-brand-gold/70 hover:text-brand-gold transition-colors flex items-center shrink-0"
-                title="View on explorer"
-              >
-                <ExternalLink className="w-3.5 h-3.5 ml-0.5" />
-              </a>
-            </div>
+          {pendingCreate ? (
+            pendingCreate.status === 'pending' ? (
+              <div className="flex items-center gap-2 px-4 py-2 bg-charcoal-medium border border-charcoal-light rounded-xl text-foreground/45 text-xs font-bold font-display tracking-wider uppercase shrink-0">
+                <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0 text-brand-gold" />
+                <span>Creating Event</span>
+                <a
+                  href={`https://explorer-bradbury.genlayer.com/tx/${pendingCreate.txHash}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-foreground/40 hover:text-foreground transition-all ml-1 shrink-0"
+                  title="View on explorer"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              </div>
+            ) : (
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 p-2.5 bg-brand-magenta/5 border border-brand-magenta/20 rounded-xl shrink-0 animate-fade-in">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-brand-magenta shrink-0 animate-pulse" />
+                  <div className="flex flex-col">
+                    <span className="text-[10px] font-bold text-brand-magenta uppercase tracking-wider font-display">Creation Stale</span>
+                    <span className="text-[9px] text-foreground/50 truncate max-w-[120px]" title={pendingCreate.txHash}>
+                      {pendingCreate.txHash.slice(0, 6)}...{pendingCreate.txHash.slice(-4)}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <a
+                    href={`https://explorer-bradbury.genlayer.com/tx/${pendingCreate.txHash}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="p-1.5 bg-charcoal-medium hover:bg-charcoal-light border border-charcoal-light/35 rounded-lg text-foreground/60 hover:text-foreground transition-all"
+                    title="View on explorer"
+                  >
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                  <button
+                    onClick={handleCheckPendingCreateAgain}
+                    disabled={isCheckingPending}
+                    className="px-2 py-1 bg-brand-magenta/10 hover:bg-brand-magenta/20 border border-brand-magenta/30 text-brand-magenta text-[9px] font-bold rounded-lg transition-all cursor-pointer uppercase tracking-wider disabled:opacity-50 font-display"
+                  >
+                    {isCheckingPending ? 'Checking...' : 'Check Again'}
+                  </button>
+                  <button
+                    onClick={() => removePendingWrite(pendingCreate.key)}
+                    className="px-2 py-1 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light text-foreground text-[9px] font-bold rounded-lg transition-all cursor-pointer uppercase tracking-wider font-display"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            )
+          ) : (
+            <button
+              onClick={() => setIsCreateModalOpen(true)}
+              className="relative overflow-hidden px-5 py-2 flex items-center gap-1.5 bg-brand-gold/10 hover:bg-brand-gold/20 border border-brand-gold/30 text-brand-gold text-xs font-bold rounded-xl transition-all cursor-pointer font-display tracking-wider uppercase shadow-md shrink-0"
+            >
+              Create Event
+              <div 
+                className="border-beam-container" 
+                style={{
+                  '--border-beam-width': '1.5px',
+                  '--border-beam-dark-opacity': '0.45',
+                  '--border-beam-light-opacity': '0.25',
+                } as React.CSSProperties}
+              />
+            </button>
           )}
-          <button
-            onClick={() => setIsCreateModalOpen(true)}
-            className="relative overflow-hidden px-5 py-2 flex items-center gap-1.5 bg-brand-gold/10 hover:bg-brand-gold/20 border border-brand-gold/30 text-brand-gold text-xs font-bold rounded-xl transition-all cursor-pointer font-display tracking-wider uppercase shadow-md shrink-0"
-          >
-            Create Event
-            <div 
-              className="border-beam-container" 
-              style={{
-                '--border-beam-width': '1.5px',
-                '--border-beam-dark-opacity': '0.45',
-                '--border-beam-light-opacity': '0.25',
-              } as React.CSSProperties}
-            />
-          </button>
         </div>
       </div>
 

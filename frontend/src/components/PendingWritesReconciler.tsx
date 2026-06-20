@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { usePendingWritesStore } from '../store/pendingWrites';
-import { checkJoinPoolPredicate } from '../services/contract';
+import { checkJoinPoolPredicate, getPoolCount } from '../services/contract';
 import { usePoolsStore } from '../store/pools';
 
 const POLL_INTERVAL = 30000; // 30 seconds
@@ -45,6 +45,14 @@ export default function PendingWritesReconciler() {
           if (entry.action === 'join_pool') {
             const confirmed = await checkJoinPoolPredicate(Number(entry.target), entry.wallet);
             if (confirmed) {
+              removePendingWrite(entry.key);
+              // Refresh global pools list to update the client dashboard view
+              loadPools().catch(() => {});
+            }
+          } else if (entry.action === 'create_pool') {
+            const currentCount = await getPoolCount();
+            const preCount = Number(entry.metadata?.preCreateCount || 0);
+            if (currentCount > preCount) {
               removePendingWrite(entry.key);
               // Refresh global pools list to update the client dashboard view
               loadPools().catch(() => {});
