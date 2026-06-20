@@ -2,12 +2,10 @@ import { create } from 'zustand';
 import {
   AdminState,
   KillswitchStatus,
-  UpgradeInfo,
   getAdminState,
   getKillswitchStatus,
   getAccumulatedFees,
   getCreationFee,
-  getPendingUpgradeInfo,
 } from '../services/contract';
 
 interface AdminStoreState {
@@ -15,7 +13,6 @@ interface AdminStoreState {
   killswitchStatus: KillswitchStatus | null;
   accumulatedFees: bigint;
   creationFee: bigint;
-  pendingUpgradeInfo: UpgradeInfo | null;
   isLoading: boolean;
   error: string | null;
   loadAdminData: () => Promise<void>;
@@ -26,7 +23,6 @@ export const useAdminStore = create<AdminStoreState>((set) => ({
   killswitchStatus: null,
   accumulatedFees: 0n,
   creationFee: 0n,
-  pendingUpgradeInfo: null,
   isLoading: false,
   error: null,
 
@@ -35,19 +31,17 @@ export const useAdminStore = create<AdminStoreState>((set) => ({
   loadAdminData: async () => {
     set({ isLoading: true, error: null });
     try {
-      const [adminState, killswitchStatus, accumulatedFees, creationFee, pendingUpgradeInfo] = await Promise.all([
+      const [adminState, killswitchStatus, accumulatedFees, creationFee] = await Promise.all([
         getAdminState(),
         getKillswitchStatus(),
         getAccumulatedFees(),
         getCreationFee(),
-        getPendingUpgradeInfo(),
       ]);
       set({
         adminState,
         killswitchStatus,
         accumulatedFees,
         creationFee,
-        pendingUpgradeInfo,
         isLoading: false,
       });
     } catch (err: any) {

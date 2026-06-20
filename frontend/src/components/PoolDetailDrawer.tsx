@@ -868,6 +868,11 @@ export default function PoolDetailDrawer() {
                 </span>
               )}
             </div>
+            {pool?.name && pool.name.trim() !== '' && (
+              <span className="text-xs font-semibold text-foreground/75">
+                Room: <span className="font-normal text-foreground/90">{pool.name}</span>
+              </span>
+            )}
             {pool && (
               <div>
                 <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full border ${getBadgeStyles(pool.state)}`}>

@@ -2,7 +2,7 @@ import { createClient } from 'genlayer-js';
 import { CalldataAddress } from 'genlayer-js/types';
 import { testnetBradbury } from 'genlayer-js/chains';
 import { rpcQueue, withRateLimitRetry } from './rpc';
-export const CONTRACT_ADDRESS = '0x2F83ECA1974432BEc3192f6a1cC0e015dD4bC118';
+export const CONTRACT_ADDRESS = '0xc97F342aC85d5d03985660B6786bf72959fD1c25';
 export const CATEGORIES = ['Crypto', 'Sports', 'Politics', 'Weather', 'Tech'] as const;
 const client = createClient({ chain: testnetBradbury });
 
@@ -20,6 +20,7 @@ export interface PoolSummary {
   total_pool: string;
   winning_outcome_index: number;
   category: string;
+  name: string;
 }
 
 /**
@@ -171,6 +172,7 @@ export interface Pool {
   resolution_evidence: string;
   refund_reason: number;
   category: string;
+  name: string;
 }
 
 /**
@@ -328,33 +330,6 @@ export async function getAccumulatedFees(): Promise<bigint> {
   );
 }
 
-export interface UpgradeInfo {
-  has_pending: boolean;
-  code_hash: string;
-  description: string;
-  apply_after: number;
-}
-
-/**
- * Fetches the pending code upgrade status details from the contract.
- */
-export async function getPendingUpgradeInfo(): Promise<UpgradeInfo> {
-  return rpcQueue.enqueue(() =>
-    withRateLimitRetry(async () => {
-      const res = await client.readContract({
-        address: CONTRACT_ADDRESS,
-        functionName: 'get_pending_upgrade_info',
-      });
-      const data = res as any;
-      return {
-        has_pending: Boolean(data.has_pending),
-        code_hash: String(data.code_hash),
-        description: String(data.description),
-        apply_after: Number(data.apply_after),
-      };
-    })
-  );
-}
 
 
 

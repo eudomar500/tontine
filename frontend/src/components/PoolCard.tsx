@@ -69,19 +69,26 @@ export default function PoolCard({ pool, isActive = true }: PoolCardProps) {
       
       {/* Top Header Section */}
       <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
-          <span
-            className="text-xs font-semibold tracking-widest uppercase"
-            style={{
-              color: theme === 'dark' ? '#9FFF3C' : '#478A00',
-              textShadow: theme === 'dark' ? '0 0 8px rgba(159, 255, 60, 0.4)' : '0 0 8px rgba(71, 138, 0, 0.25)',
-            }}
-          >
-            Event #{pool.pool_id}
-          </span>
-          {pool.category && pool.category.trim() !== '' && (
-            <span className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-charcoal-light/30 text-foreground/60 border border-charcoal-light/20 uppercase tracking-wider">
-              {pool.category}
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-2">
+            <span
+              className="text-xs font-semibold tracking-widest uppercase"
+              style={{
+                color: theme === 'dark' ? '#9FFF3C' : '#478A00',
+                textShadow: theme === 'dark' ? '0 0 8px rgba(159, 255, 60, 0.4)' : '0 0 8px rgba(71, 138, 0, 0.25)',
+              }}
+            >
+              Event #{pool.pool_id}
+            </span>
+            {pool.category && pool.category.trim() !== '' && (
+              <span className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-charcoal-light/30 text-foreground/60 border border-charcoal-light/20 uppercase tracking-wider">
+                {pool.category}
+              </span>
+            )}
+          </div>
+          {pool.name && pool.name.trim() !== '' && (
+            <span className="text-xs font-semibold text-foreground/60">
+              Room: <span className="text-foreground/80 font-normal">{pool.name}</span>
             </span>
           )}
         </div>
