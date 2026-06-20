@@ -330,6 +330,35 @@ export async function getAccumulatedFees(): Promise<bigint> {
   );
 }
 
+export async function checkJoinPoolPredicate(poolId: number, address: string): Promise<boolean> {
+  try {
+    const stake = await getStake(poolId, address);
+    return stake !== null && BigInt(stake.amount) > 0n;
+  } catch (err: any) {
+    const errMsg = err?.message?.toLowerCase() || '';
+    const errDetails = err?.details?.toLowerCase() || '';
+    const errData = (err?.data || err?.cause?.data || '').toLowerCase();
+    const errStr = JSON.stringify(err || '').toLowerCase();
+
+    // Replicate exactly the no-stake error checks to avoid false negatives on RPC variations
+    const isNoStake =
+      errMsg.includes('no stake') ||
+      errDetails.includes('no stake') ||
+      errMsg.includes('0x6e, 0x6f, 0x20, 0x73, 0x74, 0x61, 0x6b, 0x65') ||
+      errDetails.includes('0x6e, 0x6f, 0x20, 0x73, 0x74, 0x61, 0x6b, 0x65') ||
+      errData.includes('6e6f207374616b65') ||
+      errStr.includes('no stake') ||
+      errStr.includes('6e6f207374616b65') ||
+      errStr.includes('0x6e, 0x6f, 0x20, 0x73, 0x74, 0x61, 0x6b, 0x65');
+
+    if (isNoStake) {
+      return false;
+    }
+    throw err;
+  }
+}
+
+
 
 
 

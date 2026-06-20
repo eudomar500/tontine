@@ -16,10 +16,12 @@ import {
 } from 'lucide-react';
 import { usePoolsStore } from '../store/pools';
 import { useWalletStore } from '../store/wallet';
-import { useContractWrite } from '../hooks/useContractWrite';
+import { useTrackedContractWrite } from '../hooks/useTrackedContractWrite';
+import { usePendingWritesStore } from '../store/pendingWrites';
 import { useTxStore } from '../store/transactions';
 import ConfirmModal from './ConfirmModal';
-import { getPool, Pool, weiToGen, stateLabel, truncateAddress, CONTRACT_ADDRESS, getStake, Stake } from '../services/contract';
+import { getPool, Pool, weiToGen, stateLabel, truncateAddress, CONTRACT_ADDRESS, getStake, Stake, checkJoinPoolPredicate } from '../services/contract';
+
 
 /**
  * Parses GEN decimal string amount and converts it to a BigInt representation in wei units.
@@ -210,7 +212,20 @@ export default function PoolDetailDrawer() {
     }
   }, []);
 
-  const { write, status: writeStatus, txHash, error: writeError, reset: resetWrite } = useContractWrite({
+  const [isSubmittingJoin, setIsSubmittingJoin] = useState<boolean>(false);
+  const [isCheckingJoin, setIsCheckingJoin] = useState<boolean>(false);
+
+  const pendingWrites = usePendingWritesStore((state) => state.entries);
+  const pendingJoin = selectedPoolId && connectedAddress
+    ? pendingWrites.find(
+        (w) =>
+          w.wallet === connectedAddress.toLowerCase() &&
+          w.action === 'join_pool' &&
+          w.target === String(selectedPoolId)
+      )
+    : undefined;
+
+  const { write, status: writeStatus, txHash, error: writeError, reset: resetWrite } = useTrackedContractWrite({
     onSuccess: () => {
       if (selectedPoolId) {
         fetchPoolDetail(selectedPoolId);
@@ -219,6 +234,41 @@ export default function PoolDetailDrawer() {
       loadPools();
     },
   });
+
+  const prevPendingJoinRef = React.useRef(pendingJoin);
+  useEffect(() => {
+    if (prevPendingJoinRef.current && !pendingJoin && selectedPoolId) {
+      // Synchronize drawer view when reconciler successfully clears the pending entry
+      fetchUserStake(selectedPoolId, connectedAddress);
+      fetchPoolDetail(selectedPoolId);
+    }
+    prevPendingJoinRef.current = pendingJoin;
+  }, [pendingJoin, selectedPoolId, connectedAddress, fetchUserStake, fetchPoolDetail]);
+
+  const handleCheckPendingJoinAgain = async () => {
+    if (!pendingJoin || !selectedPoolId || !connectedAddress) return;
+    setIsCheckingJoin(true);
+    try {
+      const isJoined = await checkJoinPoolPredicate(selectedPoolId, connectedAddress);
+      if (isJoined) {
+        usePendingWritesStore.getState().removePendingWrite(pendingJoin.key);
+      } else {
+        // Reset timestamp and status to resume reconciler background tracking
+        usePendingWritesStore.getState().addPendingWrite(
+          connectedAddress,
+          pendingJoin.action,
+          pendingJoin.target,
+          pendingJoin.txHash,
+          pendingJoin.metadata
+        );
+      }
+    } catch (err) {
+      console.error('Manual validation query failed:', err);
+    } finally {
+      setIsCheckingJoin(false);
+    }
+  };
+
 
   // Esc key closes the drawer
   useEffect(() => {
@@ -792,12 +842,19 @@ export default function PoolDetailDrawer() {
         });
       } else if (activeAction === 'join') {
         if (selectedOutcomeIndex === null) return;
-        await write({
-          address: CONTRACT_ADDRESS,
-          functionName: 'join_pool',
-          args: [BigInt(pool.pool_id), selectedOutcomeIndex],
-          value: genToWei(stakeAmount),
-        });
+        setIsSubmittingJoin(true);
+        try {
+          await write({
+            address: CONTRACT_ADDRESS,
+            functionName: 'join_pool',
+            args: [BigInt(pool.pool_id), selectedOutcomeIndex],
+            value: genToWei(stakeAmount),
+            trackAction: 'join_pool',
+            trackTarget: String(pool.pool_id),
+          });
+        } finally {
+          setIsSubmittingJoin(false);
+        }
       } else if (activeAction === 'resolve') {
         await write({
           address: CONTRACT_ADDRESS,
@@ -1359,81 +1416,167 @@ export default function PoolDetailDrawer() {
                       <span>Your connected wallet address is not whitelisted for this private prediction pool.</span>
                     </div>
                   ) : !hasJoined ? (
-                    // Interactive Stake Form (Join)
-                    <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
-                      <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
-                        Stake on Outcome
-                      </span>
-
-                      {/* Outcome Choice Selector */}
-                      <div className="space-y-2">
-                        <span className="text-[10px] uppercase font-bold tracking-widest text-foreground/40 block">
-                          Select Outcome
-                        </span>
-                        <div className="grid grid-cols-2 gap-2">
-                          {pool.outcomes.map((outcome, idx) => {
-                            const isSelected = selectedOutcomeIndex === idx;
-                            return (
-                              <button
-                                key={idx}
-                                type="button"
-                                onClick={() => setSelectedOutcomeIndex(idx)}
-                                className={`px-4 py-3 rounded-xl border text-sm font-semibold tracking-wide transition-all cursor-pointer text-center truncate ${
-                                  isSelected
-                                    ? 'bg-brand-gold text-charcoal-dark border-brand-gold shadow-md'
-                                    : 'bg-charcoal-dark/40 hover:bg-charcoal-light border-charcoal-light text-foreground/80'
-                                }`}
-                              >
-                                {outcome.label}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      {/* Stake Amount Input field */}
-                      <div className="space-y-2">
-                        <label className="text-[10px] uppercase font-bold tracking-widest text-foreground/40 block">
-                          Stake Amount (GEN)
-                        </label>
-                        <div className="relative">
-                          <input
-                            type="number"
-                            step="0.01"
-                            min="0.01"
-                            placeholder="0.00"
-                            value={stakeAmount}
-                            onChange={(e) => {
-                              setStakeAmount(e.target.value);
-                              setValidationError(null);
-                            }}
-                            className="w-full px-4 py-3 bg-charcoal-dark border border-charcoal-light focus:border-foreground/15 rounded-xl text-sm text-foreground focus:outline-none transition-colors pr-12 placeholder-foreground/20 font-semibold"
-                          />
-                          <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-foreground/40">
-                            GEN
+                    pendingJoin ? (
+                      pendingJoin.status === 'pending' ? (
+                        <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
+                          <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
+                            Stake on Outcome
                           </span>
+                          <p className="text-xs text-foreground/60 leading-relaxed font-light">
+                            Stake requested, processing on Bradbury.
+                          </p>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              disabled
+                              className="flex-1 py-3 bg-brand-gold/20 text-brand-gold/50 font-bold tracking-wide rounded-xl cursor-not-allowed text-sm flex items-center justify-center gap-2"
+                            >
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              Join Pending
+                            </button>
+                            <a
+                              href={`https://explorer-bradbury.genlayer.com/tx/${pendingJoin.txHash}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="p-3 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light rounded-xl text-foreground/75 hover:text-foreground transition-all cursor-pointer"
+                              title="View transaction on explorer"
+                            >
+                              <ExternalLink className="w-4 h-4" />
+                            </a>
+                          </div>
                         </div>
-                        <div className="flex justify-between items-center text-[10px] text-foreground/45">
-                          <span>Minimum stake: 0.01 GEN</span>
-                          {stakeAmount && parseFloat(stakeAmount) > 0 && (
-                            <span>≈ {parseFloat(stakeAmount).toFixed(4)} GEN</span>
+                      ) : (
+                        <div className="space-y-4 bg-brand-magenta/5 border border-brand-magenta/15 rounded-2xl p-4.5">
+                          <span className="text-xs font-semibold text-brand-magenta tracking-widest uppercase flex items-center gap-1.5">
+                            <AlertCircle className="w-4 h-4 shrink-0" />
+                            Transaction Stale
+                          </span>
+                          <p className="text-xs text-foreground/75 leading-relaxed font-light">
+                            Your join transaction is taking longer than expected to finalize. Please verify on the explorer before dismissing or checking again to avoid double staking.
+                          </p>
+                          <div className="text-[10px] font-mono text-foreground/50 truncate flex items-center justify-between bg-charcoal-dark/50 border border-charcoal-light/10 px-2.5 py-1.5 rounded-lg select-all">
+                            <span className="truncate">{pendingJoin.txHash}</span>
+                            <a
+                              href={`https://explorer-bradbury.genlayer.com/tx/${pendingJoin.txHash}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-foreground/40 hover:text-foreground transition-all ml-2 shrink-0"
+                              title="View transaction on explorer"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </a>
+                          </div>
+                          <div className="flex gap-2.5">
+                            <button
+                              type="button"
+                              disabled={isCheckingJoin}
+                              onClick={handleCheckPendingJoinAgain}
+                              className="flex-1 py-2 bg-brand-gold hover:bg-brand-gold/90 text-charcoal-dark text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                            >
+                              {isCheckingJoin && <Loader2 className="w-3 h-3 animate-spin" />}
+                              Check Again
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => usePendingWritesStore.getState().removePendingWrite(pendingJoin.key)}
+                              className="flex-1 py-2 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light text-xs font-bold text-foreground rounded-xl transition-all cursor-pointer"
+                            >
+                              Dismiss
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    ) : (
+                      // Interactive Stake Form (Join)
+                      <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
+                        <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
+                          Stake on Outcome
+                        </span>
+ 
+                        {/* Outcome Choice Selector */}
+                        <div className="space-y-2">
+                          <span className="text-[10px] uppercase font-bold tracking-widest text-foreground/40 block">
+                            Select Outcome
+                          </span>
+                          <div className="grid grid-cols-2 gap-2">
+                            {pool.outcomes.map((outcome, idx) => {
+                              const isSelected = selectedOutcomeIndex === idx;
+                              return (
+                                <button
+                                  key={idx}
+                                  type="button"
+                                  disabled={isSubmittingJoin}
+                                  onClick={() => setSelectedOutcomeIndex(idx)}
+                                  className={`px-4 py-3 rounded-xl border text-sm font-semibold tracking-wide transition-all cursor-pointer text-center truncate ${
+                                    isSelected
+                                      ? 'bg-brand-gold text-charcoal-dark border-brand-gold shadow-md'
+                                      : 'bg-charcoal-dark/40 hover:bg-charcoal-light border-charcoal-light text-foreground/80'
+                                  }`}
+                                >
+                                  {outcome.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+ 
+                        {/* Stake Amount Input field */}
+                        <div className="space-y-2">
+                          <label className="text-[10px] uppercase font-bold tracking-widest text-foreground/40 block">
+                            Stake Amount (GEN)
+                          </label>
+                          <div className="relative">
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0.01"
+                              placeholder="0.00"
+                              disabled={isSubmittingJoin}
+                              value={stakeAmount}
+                              onChange={(e) => {
+                                setStakeAmount(e.target.value);
+                                setValidationError(null);
+                              }}
+                              className="w-full px-4 py-3 bg-charcoal-dark border border-charcoal-light focus:border-foreground/15 rounded-xl text-sm text-foreground focus:outline-none transition-colors pr-12 placeholder-foreground/20 font-semibold"
+                            />
+                            <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-foreground/40">
+                              GEN
+                            </span>
+                          </div>
+                          <div className="flex justify-between items-center text-[10px] text-foreground/45">
+                            <span>Minimum stake: 0.01 GEN</span>
+                            {stakeAmount && parseFloat(stakeAmount) > 0 && (
+                              <span>≈ {parseFloat(stakeAmount).toFixed(4)} GEN</span>
+                            )}
+                          </div>
+                        </div>
+ 
+                        {/* Validation / Action Triggers */}
+                        {validationError && (
+                          <p className="text-xs text-brand-magenta font-semibold">{validationError}</p>
+                        )}
+ 
+                        <button
+                          type="button"
+                          disabled={isSubmittingJoin}
+                          onClick={handleJoinClick}
+                          className={`w-full py-3 font-bold tracking-wide rounded-xl transition-all shadow-md text-sm flex items-center justify-center gap-2 ${
+                            isSubmittingJoin
+                              ? 'bg-foreground/20 text-background/55 cursor-not-allowed'
+                              : 'bg-foreground hover:bg-warm-white text-background cursor-pointer'
+                          }`}
+                        >
+                          {isSubmittingJoin ? (
+                            <>
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              Signing...
+                            </>
+                          ) : (
+                            'Join Event'
                           )}
-                        </div>
+                        </button>
                       </div>
-
-                      {/* Validation / Action Triggers */}
-                      {validationError && (
-                        <p className="text-xs text-brand-magenta font-semibold">{validationError}</p>
-                      )}
-
-                      <button
-                        type="button"
-                        onClick={handleJoinClick}
-                        className="w-full py-3 bg-foreground hover:bg-warm-white text-background font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm"
-                      >
-                        Join Event
-                      </button>
-                    </div>
+                    )
                   ) : (
                     // Interactive Stake Form (Increase)
                     <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">

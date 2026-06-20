@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useThemeStore } from '../store/theme';
+import PendingWritesReconciler from '../components/PendingWritesReconciler';
 
 export default function Providers({ children }: { children: React.ReactNode }) {
   const initializeTheme = useThemeStore((state) => state.initializeTheme);
@@ -25,5 +26,11 @@ export default function Providers({ children }: { children: React.ReactNode }) {
       })
   );
 
-  return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+  return (
+    <QueryClientProvider client={queryClient}>
+      <PendingWritesReconciler />
+      {children}
+    </QueryClientProvider>
+  );
 }
+
