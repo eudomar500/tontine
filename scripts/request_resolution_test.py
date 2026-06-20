@@ -11,7 +11,7 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 # request_resolution must be called by a whitelisted member. Admin is whitelisted.
 KEYSTORE_PATH = Path(__file__).parent.parent / ".admin-keystore.json"
 PASSWORD = os.environ["ADMIN_KEYSTORE_PASSWORD"]
-CONTRACT = "0xB59455b38F9D3f39ccccF7d48e949aaa1b7eCCd2"
+CONTRACT = "0xc97F342aC85d5d03985660B6786bf72959fD1c25"
 
 with open(KEYSTORE_PATH) as f:
     keystore = json.load(f)

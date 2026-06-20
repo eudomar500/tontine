@@ -12,7 +12,7 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 
 KEYSTORE_PATH = Path(__file__).parent.parent / ".admin-keystore.json"
 PASSWORD = os.environ["ADMIN_KEYSTORE_PASSWORD"]
-CONTRACT = "0xB59455b38F9D3f39ccccF7d48e949aaa1b7eCCd2"
+CONTRACT = "0xc97F342aC85d5d03985660B6786bf72959fD1c25"
 
 ADMIN = "0xF27E3A6d7Bf4BfC0A837020FD74E73055aF17D53"
 WALLET2 = "0xFeE34b22628Fa0D5B8fA64Ba7c49835EcB18e752"
@@ -42,7 +42,7 @@ print(f"Creating [{category}] pool...")
 tx_hash = client.write_contract(
     address=CONTRACT,
     function_name="create_pool",
-    args=[terms, ["YES", "NO"], sources, [CalldataAddress(ADMIN), CalldataAddress(WALLET2)], 3600, 7260, 0, category],
+    args=[terms, ["YES", "NO"], sources, [CalldataAddress(ADMIN), CalldataAddress(WALLET2)], 3600, 7260, 0, category, f"{category} Room"],
     value=1100000000000000000,
 )
 print(f"TX: {tx_hash}")
