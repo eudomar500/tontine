@@ -97,6 +97,35 @@ export default function PendingWritesReconciler() {
               removePendingWrite(entry.key);
               loadPools().catch(() => {});
             }
+          } else if (entry.action === 'emergency_withdraw') {
+            try {
+              // The withdrawal is complete when the stake is marked claimed.
+              const stake = await getStake(Number(entry.target), entry.wallet);
+              if (stake && stake.claimed) {
+                removePendingWrite(entry.key);
+                loadPools().catch(() => {});
+              }
+            } catch (err: any) {
+              const errMsg = err?.message?.toLowerCase() || '';
+              const errDetails = err?.details?.toLowerCase() || '';
+              const errData = (err?.data || err?.cause?.data || '').toLowerCase();
+              const errStr = JSON.stringify(err || '').toLowerCase();
+              
+              const isNoStake =
+                errMsg.includes('no stake') ||
+                errDetails.includes('no stake') ||
+                errData.includes('6e6f207374616b65') ||
+                errStr.includes('no stake') ||
+                errStr.includes('6e6f207374616b65');
+                
+              if (isNoStake) {
+                // If there's no stake record left, the withdrawal successfully cleared the stake.
+                removePendingWrite(entry.key);
+                loadPools().catch(() => {});
+              } else {
+                throw err;
+              }
+            }
           } else if (entry.action === 'set_pause') {
             const adminState = await getAdminState();
             if (adminState && adminState.paused === entry.metadata?.paused) {

@@ -66,7 +66,7 @@ export default function PoolDetailDrawer() {
   const [userStake, setUserStake] = useState<Stake | null>(null);
   const [isStakeLoading, setIsStakeLoading] = useState<boolean>(false);
   const [isStakeChecked, setIsStakeChecked] = useState<boolean>(false);
-  const [activeAction, setActiveAction] = useState<'join' | 'increase' | 'resolve' | 'claim' | 'force_refund' | 'claim_refund' | 'cancel' | 'block_and_refund' | null>(null);
+  const [activeAction, setActiveAction] = useState<'join' | 'increase' | 'resolve' | 'claim' | 'force_refund' | 'claim_refund' | 'cancel' | 'block_and_refund' | 'emergency_withdraw' | null>(null);
 
   const [isReconciled, setIsReconciled] = useState<boolean>(false);
   const [isReconciling, setIsReconciling] = useState<boolean>(false);
@@ -156,11 +156,14 @@ export default function PoolDetailDrawer() {
   const connectedAddress = useWalletStore((state) => state.connectedAddress);
   const setWalletModalOpen = useWalletStore((state) => state.setModalOpen);
 
-  const { adminState } = useAdminStore();
+  const { adminState, killswitchStatus } = useAdminStore();
   const isAdmin =
     connectedAddress &&
     adminState &&
     adminState.admin.toLowerCase() === connectedAddress.toLowerCase();
+
+  const isKillswitchActive = !!killswitchStatus?.active;
+  const hasUnclaimedStake = !!(userStake && BigInt(userStake.amount) > 0n && !userStake.claimed);
 
   const fetchPoolDetail = useCallback(async (id: number, onComplete?: () => void) => {
     const isSilent = !!onComplete;
@@ -224,6 +227,7 @@ export default function PoolDetailDrawer() {
   const [isCheckingIncrease, setIsCheckingIncrease] = useState<boolean>(false);
   const [isCheckingCancel, setIsCheckingCancel] = useState<boolean>(false);
   const [isCheckingBlockAndRefund, setIsCheckingBlockAndRefund] = useState<boolean>(false);
+  const [isCheckingEmergencyWithdraw, setIsCheckingEmergencyWithdraw] = useState<boolean>(false);
   const [isDismissAcknowledged, setIsDismissAcknowledged] = useState<boolean>(false);
   const [showDismissAcknowledge, setShowDismissAcknowledge] = useState<boolean>(false);
 
@@ -260,6 +264,15 @@ export default function PoolDetailDrawer() {
         (w) =>
           w.wallet === connectedAddress.toLowerCase() &&
           w.action === 'block_and_refund_pool' &&
+          w.target === String(selectedPoolId)
+      )
+    : undefined;
+
+  const pendingEmergencyWithdraw = selectedPoolId && connectedAddress
+    ? pendingWrites.find(
+        (w) =>
+          w.wallet === connectedAddress.toLowerCase() &&
+          w.action === 'emergency_withdraw' &&
           w.target === String(selectedPoolId)
       )
     : undefined;
@@ -311,6 +324,16 @@ export default function PoolDetailDrawer() {
     }
     prevPendingBlockAndRefundRef.current = pendingBlockAndRefund;
   }, [pendingBlockAndRefund, selectedPoolId, connectedAddress, fetchUserStake, fetchPoolDetail]);
+
+  const prevPendingEmergencyWithdrawRef = React.useRef(pendingEmergencyWithdraw);
+  useEffect(() => {
+    // Refresh the drawer details once the background reconciler removes the pending emergency withdrawal.
+    if (prevPendingEmergencyWithdrawRef.current && !pendingEmergencyWithdraw && selectedPoolId) {
+      fetchUserStake(selectedPoolId, connectedAddress);
+      fetchPoolDetail(selectedPoolId);
+    }
+    prevPendingEmergencyWithdrawRef.current = pendingEmergencyWithdraw;
+  }, [pendingEmergencyWithdraw, selectedPoolId, connectedAddress, fetchUserStake, fetchPoolDetail]);
 
   const handleCheckPendingJoinAgain = async () => {
     if (!pendingJoin || !selectedPoolId || !connectedAddress) return;
@@ -419,6 +442,47 @@ export default function PoolDetailDrawer() {
       console.error('Manual validation query failed:', err);
     } finally {
       setIsCheckingBlockAndRefund(false);
+    }
+  };
+
+  const handleCheckPendingEmergencyWithdrawAgain = async () => {
+    if (!pendingEmergencyWithdraw || !selectedPoolId || !connectedAddress) return;
+    setIsCheckingEmergencyWithdraw(true);
+    try {
+      // Queries on-chain stake details to verify if emergency withdrawal has completed.
+      const stake = await getStake(selectedPoolId, connectedAddress);
+      if (stake && stake.claimed) {
+        usePendingWritesStore.getState().removePendingWrite(pendingEmergencyWithdraw.key);
+      } else {
+        // Reset timestamp to resume background reconciler tracking
+        usePendingWritesStore.getState().addPendingWrite(
+          connectedAddress,
+          pendingEmergencyWithdraw.action,
+          pendingEmergencyWithdraw.target,
+          pendingEmergencyWithdraw.txHash,
+          pendingEmergencyWithdraw.metadata
+        );
+      }
+    } catch (err: any) {
+      const errMsg = err?.message?.toLowerCase() || '';
+      const errDetails = err?.details?.toLowerCase() || '';
+      const errData = (err?.data || err?.cause?.data || '').toLowerCase();
+      const errStr = JSON.stringify(err || '').toLowerCase();
+      
+      const isNoStake =
+        errMsg.includes('no stake') ||
+        errDetails.includes('no stake') ||
+        errData.includes('6e6f207374616b65') ||
+        errStr.includes('no stake') ||
+        errStr.includes('6e6f207374616b65');
+        
+      if (isNoStake) {
+        usePendingWritesStore.getState().removePendingWrite(pendingEmergencyWithdraw.key);
+      } else {
+        console.error('Manual validation query failed:', err);
+      }
+    } finally {
+      setIsCheckingEmergencyWithdraw(false);
     }
   };
 
@@ -987,6 +1051,12 @@ export default function PoolDetailDrawer() {
     setIsConfirmOpen(true);
   };
 
+  const handleEmergencyWithdrawClick = () => {
+    setValidationError(null);
+    setActiveAction('emergency_withdraw');
+    setIsConfirmOpen(true);
+  };
+
   const handleConfirmAction = async () => {
     if (!pool) return;
     setIsConfirmOpen(false);
@@ -1087,6 +1157,15 @@ export default function PoolDetailDrawer() {
           args: [BigInt(pool.pool_id)],
           poolId: pool.pool_id,
           trackAction: 'block_and_refund_pool',
+          trackTarget: String(pool.pool_id),
+        });
+      } else if (activeAction === 'emergency_withdraw') {
+        await write({
+          address: CONTRACT_ADDRESS,
+          functionName: 'emergency_withdraw',
+          args: [BigInt(pool.pool_id)],
+          poolId: pool.pool_id,
+          trackAction: 'emergency_withdraw',
           trackTarget: String(pool.pool_id),
         });
       }
@@ -1446,6 +1525,110 @@ export default function PoolDetailDrawer() {
                       Connect Wallet
                     </button>
                   </div>
+                ) : isKillswitchActive ? (
+                  // Emergency Mode UI Panel
+                  hasUnclaimedStake ? (
+                    pendingEmergencyWithdraw ? (
+                      pendingEmergencyWithdraw.status === 'pending' ? (
+                        <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
+                          <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
+                            Emergency Withdraw
+                          </span>
+                          <p className="text-xs text-foreground/60 leading-relaxed font-light">
+                            Withdrawal requested, processing on Bradbury.
+                          </p>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              disabled
+                              className="flex-1 py-3 bg-brand-gold/20 text-brand-gold/50 font-bold tracking-wide rounded-xl cursor-not-allowed text-sm flex items-center justify-center gap-2"
+                            >
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              Withdrawal Pending
+                            </button>
+                            <a
+                              href={`https://explorer-bradbury.genlayer.com/tx/${pendingEmergencyWithdraw.txHash}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="p-3 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light rounded-xl text-foreground/75 hover:text-foreground transition-all cursor-pointer"
+                              title="View transaction on explorer"
+                            >
+                              <ExternalLink className="w-4 h-4" />
+                            </a>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-4 bg-brand-magenta/5 border border-brand-magenta/15 rounded-2xl p-4.5">
+                          <span className="text-xs font-semibold text-brand-magenta tracking-widest uppercase flex items-center gap-1.5">
+                            <AlertCircle className="w-4 h-4 shrink-0" />
+                            Transaction Stale
+                          </span>
+                          <p className="text-xs text-foreground/75 leading-relaxed font-light">
+                            Your emergency withdrawal is taking longer than expected. Please verify on the explorer before dismissing or checking again.
+                          </p>
+                          <div className="text-[10px] font-mono text-foreground/50 truncate flex items-center justify-between bg-charcoal-dark/50 border border-charcoal-light/10 px-2.5 py-1.5 rounded-lg select-all">
+                            <span className="truncate">{pendingEmergencyWithdraw.txHash}</span>
+                            <a
+                              href={`https://explorer-bradbury.genlayer.com/tx/${pendingEmergencyWithdraw.txHash}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-foreground/40 hover:text-foreground transition-all ml-2 shrink-0"
+                              title="View transaction on explorer"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </a>
+                          </div>
+                          <div className="flex gap-2.5">
+                            <button
+                              type="button"
+                              disabled={isCheckingEmergencyWithdraw}
+                              onClick={handleCheckPendingEmergencyWithdrawAgain}
+                              className="flex-1 py-2 bg-brand-gold hover:bg-brand-gold/90 text-charcoal-dark text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                            >
+                              {isCheckingEmergencyWithdraw && <Loader2 className="w-3 h-3 animate-spin" />}
+                              Check Again
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => usePendingWritesStore.getState().removePendingWrite(pendingEmergencyWithdraw.key)}
+                              className="flex-1 py-2 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light text-xs font-bold text-foreground rounded-xl transition-all cursor-pointer"
+                            >
+                              Dismiss
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    ) : (
+                      <div className="space-y-4 bg-brand-magenta/5 border border-brand-magenta/15 rounded-2xl p-4.5">
+                        <span className="text-xs font-semibold text-brand-magenta tracking-widest uppercase block">
+                          Emergency Withdraw
+                        </span>
+                        <p className="text-xs text-foreground/75 leading-relaxed font-light">
+                          The contract is in emergency shutdown. This is the only way to recover your staked funds. You must withdraw them before the shutdown window ends.
+                        </p>
+                        <div className="space-y-1">
+                          <span className="text-[10px] uppercase font-bold tracking-widest text-foreground/40 block">Withdrawable Amount</span>
+                          <span className="text-lg font-bold text-brand-gold block">{weiToGen(userStake.amount)} GEN</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleEmergencyWithdrawClick}
+                          className="w-full py-3 bg-brand-magenta hover:bg-brand-magenta/90 text-foreground font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm"
+                        >
+                          Emergency Withdraw
+                        </button>
+                      </div>
+                    )
+                  ) : userStake && userStake.claimed ? (
+                    <div className="p-4 bg-foreground/5 border border-foreground/15 rounded-2xl flex items-center justify-center gap-2.5 text-xs text-foreground/80 font-semibold">
+                      <CheckCircle2 className="w-4 h-4 text-brand-gold" />
+                      <span>Funds Withdrawn</span>
+                    </div>
+                  ) : (
+                    <div className="p-4 bg-charcoal-medium/10 border border-charcoal-light/15 rounded-2xl text-xs text-foreground/50 text-center font-light leading-relaxed">
+                      The contract is in emergency shutdown. You did not participate in this prediction event.
+                    </div>
+                  )
                 ) : pool.state === 0 ? (
                   // State 0: OPEN
                   isResolutionFailed ? (
@@ -2168,7 +2351,7 @@ export default function PoolDetailDrawer() {
                     ) : (
                       // Losing Outcome Notice
                       <div className="p-4 bg-charcoal-medium/10 border border-charcoal-light/15 rounded-2xl text-xs text-foreground/50 text-center font-light leading-relaxed">
-                        This agreement settled on outcome <span className="font-semibold text-brand-gold">"{winningOutcome?.label || `Index #${pool.winning_outcome_index}`}"</span>. Your staked outcome did not win.
+                        This agreement settled on outcome <span className="font-semibold text-brand-gold">&quot;{winningOutcome?.label || `Index #${pool.winning_outcome_index}`}&quot;</span>. Your staked outcome did not win.
                       </div>
                     )
                   ) : (
@@ -2489,6 +2672,8 @@ export default function PoolDetailDrawer() {
               ? 'Confirm Cancel Event'
               : activeAction === 'block_and_refund'
               ? 'Confirm Block and Refund Pool'
+              : activeAction === 'emergency_withdraw'
+              ? 'Confirm Emergency Withdrawal'
               : 'Confirm Staking Action'
           }
         >
@@ -2527,6 +2712,26 @@ export default function PoolDetailDrawer() {
               </div>
               <p className="text-xs text-foreground/75 mb-3 leading-relaxed">
                 This blocks the event, sets it to REFUNDED (reason: blocked by admin), lets all participants reclaim their stakes via claim refund, and the creation fee is not returned to the creator.
+              </p>
+              <p className="text-[11px] text-foreground/45 italic leading-snug">
+                Transactions on GenLayer Bradbury have a finality window of 25 to 40 minutes.
+              </p>
+            </div>
+          ) : activeAction === 'emergency_withdraw' ? (
+            <div>
+              <p className="mb-3">Please review the details below before signing the transaction in your wallet:</p>
+              <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-2.5 mb-4">
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">Event ID</span>
+                  <span className="font-semibold text-foreground font-mono">#{pool.pool_id}</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">Action</span>
+                  <span className="font-semibold text-brand-magenta font-display uppercase">Emergency Withdraw</span>
+                </div>
+              </div>
+              <p className="text-xs text-foreground/75 mb-3 leading-relaxed">
+                This is the only way to recover your staked funds while the killswitch is active. You must withdraw them before the emergency shutdown window ends.
               </p>
               <p className="text-[11px] text-foreground/45 italic leading-snug">
                 Transactions on GenLayer Bradbury have a finality window of 25 to 40 minutes.

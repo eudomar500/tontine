@@ -11,8 +11,9 @@ import { useAdminStore } from '../store/admin';
 export default function Header() {
   const { connectedAddress, setModalOpen, disconnectWallet, initializeDiscovery } = useWalletStore();
   const { theme, toggleTheme } = useThemeStore();
-  const { adminState, loadAdminData } = useAdminStore();
+  const { adminState, killswitchStatus, loadAdminData } = useAdminStore();
   const [copied, setCopied] = useState(false);
+  const [killswitchCountdown, setKillswitchCountdown] = useState<string>('');
 
   // Initialize EIP-6963 discovery
   useEffect(() => {
@@ -20,10 +21,47 @@ export default function Header() {
     return cleanup;
   }, [initializeDiscovery]);
 
-  // Load administrative configurations to verify access level
+  // Retrieve administrative configurations and maintain updates via a periodic poll.
   useEffect(() => {
     loadAdminData();
+    const interval = setInterval(() => {
+      loadAdminData();
+    }, 30000);
+    return () => clearInterval(interval);
   }, [loadAdminData]);
+
+  // Compute and update the remaining time for the emergency shutdown window.
+  useEffect(() => {
+    if (!killswitchStatus?.active || !killswitchStatus.window_ends_at) {
+      setKillswitchCountdown('');
+      return;
+    }
+
+    const updateTimer = () => {
+      const now = Math.floor(Date.now() / 1000);
+      const diff = killswitchStatus.window_ends_at - now;
+      if (diff <= 0) {
+        setKillswitchCountdown('Emergency window expired');
+      } else {
+        const days = Math.floor(diff / 86400);
+        const hours = Math.floor((diff % 86400) / 3600);
+        const minutes = Math.floor((diff % 3600) / 60);
+        const seconds = diff % 60;
+        
+        const formatted = [];
+        if (days > 0) formatted.push(`${days}d`);
+        if (hours > 0 || days > 0) formatted.push(`${hours}h`);
+        if (minutes > 0 || hours > 0 || days > 0) formatted.push(`${minutes}m`);
+        formatted.push(`${seconds}s`);
+        
+        setKillswitchCountdown(formatted.join(' '));
+      }
+    };
+
+    updateTimer();
+    const interval = setInterval(updateTimer, 1000);
+    return () => clearInterval(interval);
+  }, [killswitchStatus]);
 
   const isAdmin =
     connectedAddress &&
@@ -46,7 +84,13 @@ export default function Header() {
   };
 
   return (
-    <header className="w-full border-b border-charcoal-light/30 bg-charcoal-dark/80 backdrop-blur-md px-8 py-5 md:px-12 md:py-6 flex items-center justify-between sticky top-0 z-40">
+    <div className="sticky top-0 z-40 w-full">
+      {killswitchStatus?.active && (
+        <div className="w-full bg-brand-magenta text-foreground py-2.5 px-4 text-center text-xs font-bold tracking-wide flex items-center justify-center gap-2">
+          <span>Contract is in emergency shutdown. Withdraw deadline: {killswitchCountdown}</span>
+        </div>
+      )}
+      <header className="w-full border-b border-charcoal-light/30 bg-charcoal-dark/80 backdrop-blur-md px-8 py-5 md:px-12 md:py-6 flex items-center justify-between">
       <div className="flex items-center gap-8">
         <a href="/" className="flex items-center">
           <Image
@@ -148,5 +192,6 @@ export default function Header() {
         )}
       </div>
     </header>
+    </div>
   );
 }
