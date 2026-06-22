@@ -2,8 +2,9 @@
 
 import { useEffect, useRef } from 'react';
 import { usePendingWritesStore } from '../store/pendingWrites';
-import { checkJoinPoolPredicate, getPoolCount, getStake, getPoolSummary } from '../services/contract';
+import { checkJoinPoolPredicate, getPoolCount, getStake, getPoolSummary, getAdminState, getKillswitchStatus, getAccumulatedFees } from '../services/contract';
 import { usePoolsStore } from '../store/pools';
+import { useAdminStore } from '../store/admin';
 
 const POLL_INTERVAL = 30000; // 30 seconds
 const TTL_LIMIT = 50 * 60 * 1000; // 50 minutes
@@ -88,6 +89,98 @@ export default function PendingWritesReconciler() {
             if (p && p.state !== 0) {
               removePendingWrite(entry.key);
               loadPools().catch(() => {});
+            }
+          } else if (entry.action === 'set_pause') {
+            const adminState = await getAdminState();
+            if (adminState && adminState.paused === entry.metadata?.paused) {
+              removePendingWrite(entry.key);
+              useAdminStore.getState().loadAdminData().catch(() => {});
+            }
+          } else if (entry.action === 'activate_killswitch') {
+            const status = await getKillswitchStatus();
+            if (status && status.active === true) {
+              removePendingWrite(entry.key);
+              useAdminStore.getState().loadAdminData().catch(() => {});
+            }
+          } else if (entry.action === 'deactivate_killswitch') {
+            const status = await getKillswitchStatus();
+            if (status && status.active === false) {
+              removePendingWrite(entry.key);
+              useAdminStore.getState().loadAdminData().catch(() => {});
+            }
+          } else if (entry.action === 'propose_creation_fee_change') {
+            const adminState = await getAdminState();
+            if (
+              adminState &&
+              adminState.pending_creation_fee === entry.metadata?.proposedFee &&
+              Number(adminState.pending_creation_fee_deadline) > 0
+            ) {
+              removePendingWrite(entry.key);
+              useAdminStore.getState().loadAdminData().catch(() => {});
+            }
+          } else if (entry.action === 'apply_creation_fee_change') {
+            const adminState = await getAdminState();
+            if (
+              adminState &&
+              adminState.creation_fee === entry.metadata?.proposedFee &&
+              adminState.pending_creation_fee === '0'
+            ) {
+              removePendingWrite(entry.key);
+              useAdminStore.getState().loadAdminData().catch(() => {});
+            }
+          } else if (entry.action === 'propose_fee_collector_change') {
+            const adminState = await getAdminState();
+            if (
+              adminState &&
+              adminState.pending_fee_collector.toLowerCase() === entry.metadata?.proposedCollector?.toLowerCase() &&
+              Number(adminState.pending_fee_collector_deadline) > 0
+            ) {
+              removePendingWrite(entry.key);
+              useAdminStore.getState().loadAdminData().catch(() => {});
+            }
+          } else if (entry.action === 'apply_fee_collector_change') {
+            const adminState = await getAdminState();
+            if (
+              adminState &&
+              adminState.fee_collector.toLowerCase() === entry.metadata?.proposedCollector?.toLowerCase() &&
+              adminState.pending_fee_collector === '0x0000000000000000000000000000000000000000'
+            ) {
+              removePendingWrite(entry.key);
+              useAdminStore.getState().loadAdminData().catch(() => {});
+            }
+          } else if (entry.action === 'propose_admin_transfer') {
+            const adminState = await getAdminState();
+            if (
+              adminState &&
+              adminState.pending_admin.toLowerCase() === entry.metadata?.proposedAdmin?.toLowerCase()
+            ) {
+              removePendingWrite(entry.key);
+              useAdminStore.getState().loadAdminData().catch(() => {});
+            }
+          } else if (entry.action === 'accept_admin_transfer') {
+            const adminState = await getAdminState();
+            if (
+              adminState &&
+              adminState.admin.toLowerCase() === entry.metadata?.proposedAdmin?.toLowerCase()
+            ) {
+              removePendingWrite(entry.key);
+              useAdminStore.getState().loadAdminData().catch(() => {});
+            }
+          } else if (entry.action === 'withdraw_fees') {
+            const currentFees = await getAccumulatedFees();
+            const preFees = BigInt(entry.metadata?.preFeesAmount || '0');
+            // Clears if fees decreased or dropped to 0, validating that payout completed
+            if (currentFees < preFees || currentFees === 0n) {
+              removePendingWrite(entry.key);
+              useAdminStore.getState().loadAdminData().catch(() => {});
+            }
+          } else if (entry.action === 'heartbeat') {
+            const adminState = await getAdminState();
+            const preHeartbeat = Number(entry.metadata?.preHeartbeat || 0);
+            // Clears when heartbeat timestamp has incremented beyond pre-tx state
+            if (adminState && Number(adminState.last_admin_heartbeat) > preHeartbeat) {
+              removePendingWrite(entry.key);
+              useAdminStore.getState().loadAdminData().catch(() => {});
             }
           }
         } catch (error) {

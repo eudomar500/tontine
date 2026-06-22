@@ -18,8 +18,9 @@ import {
 } from 'lucide-react';
 import { useWalletStore } from '../store/wallet';
 import { useAdminStore } from '../store/admin';
-import { useContractWrite } from '../hooks/useContractWrite';
-import { CONTRACT_ADDRESS, weiToGen, truncateAddress, hexToBytes } from '../services/contract';
+import { useTrackedContractWrite } from '../hooks/useTrackedContractWrite';
+import { usePendingWritesStore } from '../store/pendingWrites';
+import { CONTRACT_ADDRESS, weiToGen, truncateAddress, hexToBytes, getAdminState, getAccumulatedFees, getKillswitchStatus } from '../services/contract';
 import ConfirmModal from './ConfirmModal';
 import AdminCountdown from './AdminCountdown';
 import AdminInputField from './AdminInputField';
@@ -136,11 +137,164 @@ export default function AdminPanel() {
     txHash,
     error: writeError,
     reset: resetWrite,
-  } = useContractWrite({
+  } = useTrackedContractWrite({
     onSuccess: () => {
       loadAdminData();
     },
   });
+
+  const pendingWrites = usePendingWritesStore((state) => state.entries);
+
+  const getPendingWrite = (action: string) => {
+    if (!connectedAddress) return undefined;
+    return pendingWrites.find(
+      (w) =>
+        w.wallet === connectedAddress.toLowerCase() &&
+        w.action === action &&
+        w.target === 'admin'
+    );
+  };
+
+  const [checkingAdminActions, setCheckingAdminActions] = useState<Record<string, boolean>>({});
+
+  const handleCheckPendingAdminAgain = async (action: string) => {
+    const pending = getPendingWrite(action);
+    if (!pending || !connectedAddress) return;
+    setCheckingAdminActions((prev) => ({ ...prev, [action]: true }));
+    try {
+      let confirmed = false;
+      if (action === 'set_pause') {
+        const freshState = await getAdminState();
+        confirmed = freshState && freshState.paused === pending.metadata?.paused;
+      } else if (action === 'activate_killswitch') {
+        const status = await getKillswitchStatus();
+        confirmed = status && status.active === true;
+      } else if (action === 'deactivate_killswitch') {
+        const status = await getKillswitchStatus();
+        confirmed = status && status.active === false;
+      } else if (action === 'propose_creation_fee_change') {
+        const freshState = await getAdminState();
+        confirmed = freshState && freshState.pending_creation_fee === pending.metadata?.proposedFee && Number(freshState.pending_creation_fee_deadline) > 0;
+      } else if (action === 'apply_creation_fee_change') {
+        const freshState = await getAdminState();
+        confirmed = freshState && freshState.creation_fee === pending.metadata?.proposedFee && freshState.pending_creation_fee === '0';
+      } else if (action === 'propose_fee_collector_change') {
+        const freshState = await getAdminState();
+        confirmed = freshState && freshState.pending_fee_collector.toLowerCase() === pending.metadata?.proposedCollector?.toLowerCase() && Number(freshState.pending_fee_collector_deadline) > 0;
+      } else if (action === 'apply_fee_collector_change') {
+        const freshState = await getAdminState();
+        confirmed = freshState && freshState.fee_collector.toLowerCase() === pending.metadata?.proposedCollector?.toLowerCase() && freshState.pending_fee_collector === '0x0000000000000000000000000000000000000000';
+      } else if (action === 'propose_admin_transfer') {
+        const freshState = await getAdminState();
+        confirmed = freshState && freshState.pending_admin.toLowerCase() === pending.metadata?.proposedAdmin?.toLowerCase();
+      } else if (action === 'accept_admin_transfer') {
+        const freshState = await getAdminState();
+        confirmed = freshState && freshState.admin.toLowerCase() === pending.metadata?.proposedAdmin?.toLowerCase();
+      } else if (action === 'withdraw_fees') {
+        const currentFees = await getAccumulatedFees();
+        const preFees = BigInt(pending.metadata?.preFeesAmount || '0');
+        confirmed = currentFees < preFees || currentFees === 0n;
+      } else if (action === 'heartbeat') {
+        const freshState = await getAdminState();
+        const preHeartbeat = Number(pending.metadata?.preHeartbeat || 0);
+        confirmed = freshState && Number(freshState.last_admin_heartbeat) > preHeartbeat;
+      }
+
+      if (confirmed) {
+        usePendingWritesStore.getState().removePendingWrite(pending.key);
+        loadAdminData();
+      } else {
+        // Reset timestamp to resume tracking
+        usePendingWritesStore.getState().addPendingWrite(
+          connectedAddress,
+          pending.action,
+          pending.target,
+          pending.txHash,
+          pending.metadata
+        );
+      }
+    } catch (err) {
+      console.error('Manual validation query failed:', err);
+    } finally {
+      setCheckingAdminActions((prev) => ({ ...prev, [action]: false }));
+    }
+  };
+
+  const renderAdminAction = (
+    actionName: string,
+    loadingLabel: string,
+    defaultRender: () => React.ReactNode
+  ) => {
+    const pending = getPendingWrite(actionName);
+    if (!pending) {
+      return defaultRender();
+    }
+
+    if (pending.status === 'pending') {
+      return (
+        <div className="space-y-2 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-xl p-3 w-full">
+          <button disabled className="w-full py-2.5 bg-brand-gold/20 text-brand-gold/50 font-bold rounded-xl cursor-not-allowed text-xs flex items-center justify-center gap-2">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            {loadingLabel}
+          </button>
+          <div className="text-[10px] font-mono text-foreground/50 truncate flex items-center justify-between bg-charcoal-dark/50 border border-charcoal-light/10 px-2.5 py-1 rounded-lg">
+            <span className="truncate">{pending.txHash}</span>
+            <a
+              href={`https://explorer-bradbury.genlayer.com/tx/${pending.txHash}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-foreground/45 hover:text-foreground transition-all ml-1 shrink-0"
+              title="View transaction on explorer"
+            >
+              <ExternalLink className="w-3 h-3" />
+            </a>
+          </div>
+        </div>
+      );
+    }
+
+    // Stale status
+    return (
+      <div className="space-y-2 bg-brand-magenta/5 border border-brand-magenta/15 rounded-xl p-3 w-full">
+        <span className="text-[10px] font-bold text-brand-magenta uppercase tracking-wider block">
+          Transaction Stale
+        </span>
+        <p className="text-[11px] text-foreground/60 leading-normal font-light">
+          This operation is taking longer than expected. Please verify on the explorer before dismissing or checking again.
+        </p>
+        <div className="text-[10px] font-mono text-foreground/50 truncate flex items-center justify-between bg-charcoal-dark/50 border border-charcoal-light/10 px-2.5 py-1 rounded-lg">
+          <span className="truncate">{pending.txHash}</span>
+          <a
+            href={`https://explorer-bradbury.genlayer.com/tx/${pending.txHash}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-foreground/45 hover:text-foreground transition-all ml-1 shrink-0"
+            title="View transaction on explorer"
+          >
+            <ExternalLink className="w-3 h-3" />
+          </a>
+        </div>
+        <div className="flex gap-2 text-xs font-bold">
+          <button
+            type="button"
+            disabled={checkingAdminActions[actionName]}
+            onClick={() => handleCheckPendingAdminAgain(actionName)}
+            className="flex-1 py-1.5 bg-brand-gold hover:bg-brand-gold/90 text-charcoal-dark rounded-lg transition-all flex items-center justify-center gap-1 cursor-pointer"
+          >
+            {checkingAdminActions[actionName] && <Loader2 className="w-3 h-3 animate-spin" />}
+            Check Again
+          </button>
+          <button
+            type="button"
+            onClick={() => usePendingWritesStore.getState().removePendingWrite(pending.key)}
+            className="flex-1 py-1.5 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light text-foreground rounded-lg transition-all cursor-pointer"
+          >
+            Dismiss
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [activeAction, setActiveAction] = useState<
@@ -188,9 +342,13 @@ export default function AdminPanel() {
   // Triggers the on-chain heartbeat transaction immediately without confirmation modal.
   const handleHeartbeatClick = async () => {
     try {
+      const freshState = await getAdminState();
       await write({
         address: CONTRACT_ADDRESS,
         functionName: 'heartbeat',
+        trackAction: 'heartbeat',
+        trackTarget: 'admin',
+        trackMetadata: { preHeartbeat: freshState.last_admin_heartbeat },
       });
     } catch (err) {
       // Errors handled within contract write hook
@@ -269,7 +427,7 @@ export default function AdminPanel() {
   };
 
   const handleConfirmAction = async () => {
-    if (!adminState) return;
+    if (!adminState || !connectedAddress) return;
     setIsConfirmOpen(false);
     try {
       if (activeAction === 'pause') {
@@ -277,21 +435,32 @@ export default function AdminPanel() {
           address: CONTRACT_ADDRESS,
           functionName: 'set_pause',
           args: [!adminState.paused],
+          trackAction: 'set_pause',
+          trackTarget: 'admin',
+          trackMetadata: { paused: !adminState.paused },
         });
       } else if (activeAction === 'withdraw') {
+        const freshFees = await getAccumulatedFees();
         await write({
           address: CONTRACT_ADDRESS,
           functionName: 'withdraw_fees',
+          trackAction: 'withdraw_fees',
+          trackTarget: 'admin',
+          trackMetadata: { preFeesAmount: freshFees.toString() },
         });
       } else if (activeAction === 'activate_killswitch') {
         await write({
           address: CONTRACT_ADDRESS,
           functionName: 'activate_killswitch',
+          trackAction: 'activate_killswitch',
+          trackTarget: 'admin',
         });
       } else if (activeAction === 'deactivate_killswitch') {
         await write({
           address: CONTRACT_ADDRESS,
           functionName: 'deactivate_killswitch',
+          trackAction: 'deactivate_killswitch',
+          trackTarget: 'admin',
         });
       } else if (activeAction === 'propose_creation_fee') {
         const feeWei = parseGenToWei(newCreationFee);
@@ -299,12 +468,18 @@ export default function AdminPanel() {
           address: CONTRACT_ADDRESS,
           functionName: 'propose_creation_fee_change',
           args: [feeWei],
+          trackAction: 'propose_creation_fee_change',
+          trackTarget: 'admin',
+          trackMetadata: { proposedFee: feeWei.toString() },
         });
         setNewCreationFee('');
       } else if (activeAction === 'apply_creation_fee') {
         await write({
           address: CONTRACT_ADDRESS,
           functionName: 'apply_creation_fee_change',
+          trackAction: 'apply_creation_fee_change',
+          trackTarget: 'admin',
+          trackMetadata: { proposedFee: adminState.pending_creation_fee },
         });
       } else if (activeAction === 'propose_fee_collector') {
         const calldataAddr = new CalldataAddress(hexToBytes(newFeeCollector.trim()));
@@ -312,12 +487,18 @@ export default function AdminPanel() {
           address: CONTRACT_ADDRESS,
           functionName: 'propose_fee_collector_change',
           args: [calldataAddr],
+          trackAction: 'propose_fee_collector_change',
+          trackTarget: 'admin',
+          trackMetadata: { proposedCollector: newFeeCollector.trim().toLowerCase() },
         });
         setNewFeeCollector('');
       } else if (activeAction === 'apply_fee_collector') {
         await write({
           address: CONTRACT_ADDRESS,
           functionName: 'apply_fee_collector_change',
+          trackAction: 'apply_fee_collector_change',
+          trackTarget: 'admin',
+          trackMetadata: { proposedCollector: adminState.pending_fee_collector.toLowerCase() },
         });
       } else if (activeAction === 'propose_admin') {
         const calldataAddr = new CalldataAddress(hexToBytes(newAdmin.trim()));
@@ -325,12 +506,18 @@ export default function AdminPanel() {
           address: CONTRACT_ADDRESS,
           functionName: 'propose_admin_transfer',
           args: [calldataAddr],
+          trackAction: 'propose_admin_transfer',
+          trackTarget: 'admin',
+          trackMetadata: { proposedAdmin: newAdmin.trim().toLowerCase() },
         });
         setNewAdmin('');
       } else if (activeAction === 'accept_admin') {
         await write({
           address: CONTRACT_ADDRESS,
           functionName: 'accept_admin_transfer',
+          trackAction: 'accept_admin_transfer',
+          trackTarget: 'admin',
+          trackMetadata: { proposedAdmin: connectedAddress.toLowerCase() },
         });
       }
     } catch (err) {
@@ -587,14 +774,16 @@ export default function AdminPanel() {
                 </div>
               </div>
             ) : (
-              <button
-                type="button"
-                disabled={currentTimestamp > adminState.admin_transfer_deadline}
-                onClick={handleAcceptAdminClick}
-                className="w-full py-3 bg-brand-gold hover:bg-brand-gold/90 text-charcoal-dark font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm flex items-center justify-center gap-2 mt-4"
-              >
-                Accept Admin Transfer
-              </button>
+              renderAdminAction('accept_admin_transfer', 'Transfer Pending', () => (
+                <button
+                  type="button"
+                  disabled={currentTimestamp > adminState.admin_transfer_deadline}
+                  onClick={handleAcceptAdminClick}
+                  className="w-full py-3 bg-brand-gold hover:bg-brand-gold/90 text-charcoal-dark font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm flex items-center justify-center gap-2 mt-4"
+                >
+                  Accept Admin Transfer
+                </button>
+              ))
             )}
           </div>
         </div>
@@ -736,15 +925,17 @@ export default function AdminPanel() {
                 </div>
               </div>
 
-              <button
-                type="button"
-                disabled={accumulatedFees === 0n || writeStatus !== 'idle'}
-                onClick={handleWithdrawClick}
-                className="w-full py-2.5 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light/35 text-foreground/80 hover:text-foreground disabled:opacity-40 disabled:hover:bg-charcoal-light disabled:cursor-not-allowed font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-xs flex items-center justify-center gap-2 mt-2"
-              >
-                <Coins className="w-3.5 h-3.5 text-brand-gold" />
-                Withdraw Accumulated Fees
-              </button>
+              {renderAdminAction('withdraw_fees', 'Withdrawal Pending', () => (
+                <button
+                  type="button"
+                  disabled={accumulatedFees === 0n || writeStatus !== 'idle'}
+                  onClick={handleWithdrawClick}
+                  className="w-full py-2.5 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light/35 text-foreground/80 hover:text-foreground disabled:opacity-40 disabled:hover:bg-charcoal-light disabled:cursor-not-allowed font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-xs flex items-center justify-center gap-2 mt-2"
+                >
+                  <Coins className="w-3.5 h-3.5 text-brand-gold" />
+                  Withdraw Accumulated Fees
+                </button>
+              ))}
 
               {connectedAddress && adminState && connectedAddress.toLowerCase() !== adminState.fee_collector.toLowerCase() && (
                 <p className="text-[10px] text-brand-magenta/60 leading-snug mt-1 text-center">
@@ -799,14 +990,16 @@ export default function AdminPanel() {
                       <AdminCountdown deadline={adminState.admin_transfer_deadline} isExpiration={true} />
                     </div>
                     {connectedAddress && adminState.pending_admin.toLowerCase() === connectedAddress.toLowerCase() ? (
-                      <button
-                        type="button"
-                        disabled={currentTimestamp > adminState.admin_transfer_deadline || writeStatus !== 'idle'}
-                        onClick={handleAcceptAdminClick}
-                        className="w-full py-1.5 bg-brand-gold hover:bg-brand-gold/90 text-charcoal-dark text-[10px] font-bold rounded-lg transition-all cursor-pointer"
-                      >
-                        Accept Admin Transfer
-                      </button>
+                      renderAdminAction('accept_admin_transfer', 'Accepting Transfer', () => (
+                        <button
+                          type="button"
+                          disabled={currentTimestamp > adminState.admin_transfer_deadline || writeStatus !== 'idle'}
+                          onClick={handleAcceptAdminClick}
+                          className="w-full py-1.5 bg-brand-gold hover:bg-brand-gold/90 text-charcoal-dark text-[10px] font-bold rounded-lg transition-all cursor-pointer"
+                        >
+                          Accept Admin Transfer
+                        </button>
+                      ))
                     ) : (
                       <span className="text-[9px] text-brand-magenta/80 leading-snug font-medium italic text-center">
                         Awaiting signature from proposed admin address.
@@ -833,14 +1026,16 @@ export default function AdminPanel() {
                       <span className="text-foreground/45">Unlocks in</span>
                       <AdminCountdown deadline={adminState.pending_fee_collector_deadline} />
                     </div>
-                    <button
-                      type="button"
-                      disabled={currentTimestamp < adminState.pending_fee_collector_deadline || writeStatus !== 'idle'}
-                      onClick={handleApplyFeeCollectorClick}
-                      className="w-full py-1.5 bg-brand-gold disabled:opacity-40 disabled:hover:bg-brand-gold text-charcoal-dark text-[10px] font-bold rounded-lg transition-all cursor-pointer"
-                    >
-                      Apply Collector Rotation
-                    </button>
+                    {renderAdminAction('apply_fee_collector_change', 'Applying Collector Rotation', () => (
+                      <button
+                        type="button"
+                        disabled={currentTimestamp < adminState.pending_fee_collector_deadline || writeStatus !== 'idle'}
+                        onClick={handleApplyFeeCollectorClick}
+                        className="w-full py-1.5 bg-brand-gold disabled:opacity-40 disabled:hover:bg-brand-gold text-charcoal-dark text-[10px] font-bold rounded-lg transition-all cursor-pointer"
+                      >
+                        Apply Collector Rotation
+                      </button>
+                    ))}
                   </div>
                 )}
               </div>
@@ -862,14 +1057,16 @@ export default function AdminPanel() {
                       <span className="text-foreground/45">Unlocks in</span>
                       <AdminCountdown deadline={adminState.pending_creation_fee_deadline} />
                     </div>
-                    <button
-                      type="button"
-                      disabled={currentTimestamp < adminState.pending_creation_fee_deadline || writeStatus !== 'idle'}
-                      onClick={handleApplyCreationFeeClick}
-                      className="w-full py-1.5 bg-brand-gold disabled:opacity-40 disabled:hover:bg-brand-gold text-charcoal-dark text-[10px] font-bold rounded-lg transition-all cursor-pointer"
-                    >
-                      Apply Fee Change
-                    </button>
+                    {renderAdminAction('apply_creation_fee_change', 'Applying Fee Change', () => (
+                      <button
+                        type="button"
+                        disabled={currentTimestamp < adminState.pending_creation_fee_deadline || writeStatus !== 'idle'}
+                        onClick={handleApplyCreationFeeClick}
+                        className="w-full py-1.5 bg-brand-gold disabled:opacity-40 disabled:hover:bg-brand-gold text-charcoal-dark text-[10px] font-bold rounded-lg transition-all cursor-pointer"
+                      >
+                        Apply Fee Change
+                      </button>
+                    ))}
                   </div>
                 )}
               </div>
@@ -1073,56 +1270,64 @@ export default function AdminPanel() {
             ) : (
               /* Operational Action Buttons */
               <div className="space-y-3.5">
-                <button
-                  type="button"
-                  onClick={handlePauseToggleClick}
-                  className={`w-full py-3 text-charcoal-dark font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm flex items-center justify-center gap-2 ${
-                    adminState.paused
-                      ? 'bg-brand-gold hover:bg-brand-gold/90'
-                      : 'bg-brand-magenta hover:bg-brand-magenta/90 text-foreground'
-                  }`}
-                >
-                  {adminState.paused ? (
-                    <>
-                      <Play className="w-4 h-4" />
-                      Unpause System
-                    </>
-                  ) : (
-                    <>
-                      <Pause className="w-4 h-4" />
-                      Pause System
-                    </>
-                  )}
-                </button>
+                {renderAdminAction('set_pause', 'Pause Change Pending', () => (
+                  <button
+                    type="button"
+                    onClick={handlePauseToggleClick}
+                    className={`w-full py-3 text-charcoal-dark font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm flex items-center justify-center gap-2 ${
+                      adminState.paused
+                        ? 'bg-brand-gold hover:bg-brand-gold/90'
+                        : 'bg-brand-magenta hover:bg-brand-magenta/90 text-foreground'
+                    }`}
+                  >
+                    {adminState.paused ? (
+                      <>
+                        <Play className="w-4 h-4" />
+                        Unpause System
+                      </>
+                    ) : (
+                      <>
+                        <Pause className="w-4 h-4" />
+                        Pause System
+                      </>
+                    )}
+                  </button>
+                ))}
 
-                <button
-                  type="button"
-                  onClick={handleHeartbeatClick}
-                  className="w-full py-3 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light/35 text-foreground/80 hover:text-foreground font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm flex items-center justify-center gap-2"
-                >
-                  <Heart className="w-4 h-4 text-brand-magenta shrink-0" />
-                  Emit Admin Heartbeat
-                </button>
+                {renderAdminAction('heartbeat', 'Heartbeat Pending', () => (
+                  <button
+                    type="button"
+                    onClick={handleHeartbeatClick}
+                    className="w-full py-3 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light/35 text-foreground/80 hover:text-foreground font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm flex items-center justify-center gap-2"
+                  >
+                    <Heart className="w-4 h-4 text-brand-magenta shrink-0" />
+                    Emit Admin Heartbeat
+                  </button>
+                ))}
 
                 {!killswitchStatus?.active ? (
-                  <button
-                    type="button"
-                    onClick={handleActivateKillswitchClick}
-                    className="w-full py-3 bg-brand-magenta/10 hover:bg-brand-magenta/20 border border-brand-magenta/35 text-brand-magenta font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm flex items-center justify-center gap-2"
-                  >
-                    <ShieldAlert className="w-4 h-4 shrink-0" />
-                    Activate Killswitch
-                  </button>
+                  renderAdminAction('activate_killswitch', 'Activation Pending', () => (
+                    <button
+                      type="button"
+                      onClick={handleActivateKillswitchClick}
+                      className="w-full py-3 bg-brand-magenta/10 hover:bg-brand-magenta/20 border border-brand-magenta/35 text-brand-magenta font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm flex items-center justify-center gap-2"
+                    >
+                      <ShieldAlert className="w-4 h-4 shrink-0" />
+                      Activate Killswitch
+                    </button>
+                  ))
                 ) : (
-                  <button
-                    type="button"
-                    disabled={!killswitchStatus.can_deactivate || writeStatus !== 'idle'}
-                    onClick={handleDeactivateKillswitchClick}
-                    className="w-full py-3 bg-brand-gold/10 hover:bg-brand-gold/20 border border-brand-gold/35 text-brand-gold disabled:opacity-40 disabled:hover:bg-brand-gold/10 disabled:cursor-not-allowed font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm flex items-center justify-center gap-2"
-                  >
-                    <ShieldAlert className="w-4 h-4 shrink-0" />
-                    Deactivate Killswitch
-                  </button>
+                  renderAdminAction('deactivate_killswitch', 'Deactivation Pending', () => (
+                    <button
+                      type="button"
+                      disabled={!killswitchStatus.can_deactivate || writeStatus !== 'idle'}
+                      onClick={handleDeactivateKillswitchClick}
+                      className="w-full py-3 bg-brand-gold/10 hover:bg-brand-gold/20 border border-brand-gold/35 text-brand-gold disabled:opacity-40 disabled:hover:bg-brand-gold/10 disabled:cursor-not-allowed font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm flex items-center justify-center gap-2"
+                    >
+                      <ShieldAlert className="w-4 h-4 shrink-0" />
+                      Deactivate Killswitch
+                    </button>
+                  ))
                 )}
               </div>
             )}
@@ -1154,14 +1359,16 @@ export default function AdminPanel() {
                 error={creationFeeError}
                 disabled={writeStatus !== 'idle'}
               />
-              <button
-                type="button"
-                disabled={!newCreationFee.trim() || writeStatus !== 'idle'}
-                onClick={handleProposeCreationFeeClick}
-                className="w-full py-2.5 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light text-xs font-semibold text-foreground rounded-xl transition-all cursor-pointer mt-2"
-              >
-                Queue Fee Update
-              </button>
+              {renderAdminAction('propose_creation_fee_change', 'Fee Queue Pending', () => (
+                <button
+                  type="button"
+                  disabled={!newCreationFee.trim() || writeStatus !== 'idle'}
+                  onClick={handleProposeCreationFeeClick}
+                  className="w-full py-2.5 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light text-xs font-semibold text-foreground rounded-xl transition-all cursor-pointer mt-2"
+                >
+                  Queue Fee Update
+                </button>
+              ))}
             </div>
 
             {/* Propose Fee Collector Rotation */}
@@ -1177,14 +1384,16 @@ export default function AdminPanel() {
                 error={feeCollectorError}
                 disabled={writeStatus !== 'idle'}
               />
-              <button
-                type="button"
-                disabled={!newFeeCollector.trim() || writeStatus !== 'idle'}
-                onClick={handleProposeFeeCollectorClick}
-                className="w-full py-2.5 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light text-xs font-semibold text-foreground rounded-xl transition-all cursor-pointer mt-2"
-              >
-                Queue Collector Rotation
-              </button>
+              {renderAdminAction('propose_fee_collector_change', 'Collector Rotation Pending', () => (
+                <button
+                  type="button"
+                  disabled={!newFeeCollector.trim() || writeStatus !== 'idle'}
+                  onClick={handleProposeFeeCollectorClick}
+                  className="w-full py-2.5 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light text-xs font-semibold text-foreground rounded-xl transition-all cursor-pointer mt-2"
+                >
+                  Queue Collector Rotation
+                </button>
+              ))}
             </div>
 
             {/* Propose Admin Transfer */}
@@ -1200,14 +1409,16 @@ export default function AdminPanel() {
                 error={newAdminError}
                 disabled={writeStatus !== 'idle'}
               />
-              <button
-                type="button"
-                disabled={!newAdmin.trim() || writeStatus !== 'idle'}
-                onClick={handleProposeAdminClick}
-                className="w-full py-2.5 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light text-xs font-semibold text-foreground rounded-xl transition-all cursor-pointer mt-2"
-              >
-                Initiate Admin Transfer
-              </button>
+              {renderAdminAction('propose_admin_transfer', 'Transfer Initiation Pending', () => (
+                <button
+                  type="button"
+                  disabled={!newAdmin.trim() || writeStatus !== 'idle'}
+                  onClick={handleProposeAdminClick}
+                  className="w-full py-2.5 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light text-xs font-semibold text-foreground rounded-xl transition-all cursor-pointer mt-2"
+                >
+                  Initiate Admin Transfer
+                </button>
+              ))}
             </div>
           </div>
         </div>
