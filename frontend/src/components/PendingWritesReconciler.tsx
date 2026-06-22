@@ -90,6 +90,13 @@ export default function PendingWritesReconciler() {
               removePendingWrite(entry.key);
               loadPools().catch(() => {});
             }
+          } else if (entry.action === 'block_and_refund_pool') {
+            // Once the pool state changes from OPEN on-chain, the administrative block is complete.
+            const p = await getPoolSummary(Number(entry.target));
+            if (p && p.state !== 0) {
+              removePendingWrite(entry.key);
+              loadPools().catch(() => {});
+            }
           } else if (entry.action === 'set_pause') {
             const adminState = await getAdminState();
             if (adminState && adminState.paused === entry.metadata?.paused) {

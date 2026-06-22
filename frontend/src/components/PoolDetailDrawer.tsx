@@ -21,6 +21,7 @@ import { usePendingWritesStore } from '../store/pendingWrites';
 import { useTxStore } from '../store/transactions';
 import ConfirmModal from './ConfirmModal';
 import { getPool, Pool, weiToGen, stateLabel, truncateAddress, CONTRACT_ADDRESS, getStake, Stake, checkJoinPoolPredicate, getPoolSummary } from '../services/contract';
+import { useAdminStore } from '../store/admin';
 
 
 /**
@@ -65,7 +66,7 @@ export default function PoolDetailDrawer() {
   const [userStake, setUserStake] = useState<Stake | null>(null);
   const [isStakeLoading, setIsStakeLoading] = useState<boolean>(false);
   const [isStakeChecked, setIsStakeChecked] = useState<boolean>(false);
-  const [activeAction, setActiveAction] = useState<'join' | 'increase' | 'resolve' | 'claim' | 'force_refund' | 'claim_refund' | 'cancel' | null>(null);
+  const [activeAction, setActiveAction] = useState<'join' | 'increase' | 'resolve' | 'claim' | 'force_refund' | 'claim_refund' | 'cancel' | 'block_and_refund' | null>(null);
 
   const [isReconciled, setIsReconciled] = useState<boolean>(false);
   const [isReconciling, setIsReconciling] = useState<boolean>(false);
@@ -155,6 +156,12 @@ export default function PoolDetailDrawer() {
   const connectedAddress = useWalletStore((state) => state.connectedAddress);
   const setWalletModalOpen = useWalletStore((state) => state.setModalOpen);
 
+  const { adminState } = useAdminStore();
+  const isAdmin =
+    connectedAddress &&
+    adminState &&
+    adminState.admin.toLowerCase() === connectedAddress.toLowerCase();
+
   const fetchPoolDetail = useCallback(async (id: number, onComplete?: () => void) => {
     const isSilent = !!onComplete;
     if (!isSilent) {
@@ -216,6 +223,7 @@ export default function PoolDetailDrawer() {
   const [isCheckingJoin, setIsCheckingJoin] = useState<boolean>(false);
   const [isCheckingIncrease, setIsCheckingIncrease] = useState<boolean>(false);
   const [isCheckingCancel, setIsCheckingCancel] = useState<boolean>(false);
+  const [isCheckingBlockAndRefund, setIsCheckingBlockAndRefund] = useState<boolean>(false);
   const [isDismissAcknowledged, setIsDismissAcknowledged] = useState<boolean>(false);
   const [showDismissAcknowledge, setShowDismissAcknowledge] = useState<boolean>(false);
 
@@ -243,6 +251,15 @@ export default function PoolDetailDrawer() {
         (w) =>
           w.wallet === connectedAddress.toLowerCase() &&
           w.action === 'cancel_pool' &&
+          w.target === String(selectedPoolId)
+      )
+    : undefined;
+
+  const pendingBlockAndRefund = selectedPoolId && connectedAddress
+    ? pendingWrites.find(
+        (w) =>
+          w.wallet === connectedAddress.toLowerCase() &&
+          w.action === 'block_and_refund_pool' &&
           w.target === String(selectedPoolId)
       )
     : undefined;
@@ -284,6 +301,16 @@ export default function PoolDetailDrawer() {
     }
     prevPendingCancelRef.current = pendingCancel;
   }, [pendingCancel, selectedPoolId, connectedAddress, fetchUserStake, fetchPoolDetail]);
+
+  const prevPendingBlockAndRefundRef = React.useRef(pendingBlockAndRefund);
+  useEffect(() => {
+    // Refresh the drawer details once the background reconciler removes the pending administrative block.
+    if (prevPendingBlockAndRefundRef.current && !pendingBlockAndRefund && selectedPoolId) {
+      fetchUserStake(selectedPoolId, connectedAddress);
+      fetchPoolDetail(selectedPoolId);
+    }
+    prevPendingBlockAndRefundRef.current = pendingBlockAndRefund;
+  }, [pendingBlockAndRefund, selectedPoolId, connectedAddress, fetchUserStake, fetchPoolDetail]);
 
   const handleCheckPendingJoinAgain = async () => {
     if (!pendingJoin || !selectedPoolId || !connectedAddress) return;
@@ -367,6 +394,31 @@ export default function PoolDetailDrawer() {
       console.error('Manual validation query failed:', err);
     } finally {
       setIsCheckingCancel(false);
+    }
+  };
+
+  const handleCheckPendingBlockAndRefundAgain = async () => {
+    if (!pendingBlockAndRefund || !selectedPoolId || !connectedAddress) return;
+    setIsCheckingBlockAndRefund(true);
+    try {
+      // Queries on-chain pool status to verify if block and refund has processed.
+      const p = await getPoolSummary(selectedPoolId);
+      if (p && p.state !== 0) {
+        usePendingWritesStore.getState().removePendingWrite(pendingBlockAndRefund.key);
+      } else {
+        // Reset timestamp and status to resume background reconciler tracking
+        usePendingWritesStore.getState().addPendingWrite(
+          connectedAddress,
+          pendingBlockAndRefund.action,
+          pendingBlockAndRefund.target,
+          pendingBlockAndRefund.txHash,
+          pendingBlockAndRefund.metadata
+        );
+      }
+    } catch (err) {
+      console.error('Manual validation query failed:', err);
+    } finally {
+      setIsCheckingBlockAndRefund(false);
     }
   };
 
@@ -929,6 +981,12 @@ export default function PoolDetailDrawer() {
     setIsConfirmOpen(true);
   };
 
+  const handleBlockAndRefundClick = () => {
+    setValidationError(null);
+    setActiveAction('block_and_refund');
+    setIsConfirmOpen(true);
+  };
+
   const handleConfirmAction = async () => {
     if (!pool) return;
     setIsConfirmOpen(false);
@@ -1020,6 +1078,15 @@ export default function PoolDetailDrawer() {
           args: [BigInt(pool.pool_id)],
           poolId: pool.pool_id,
           trackAction: 'cancel_pool',
+          trackTarget: String(pool.pool_id),
+        });
+      } else if (activeAction === 'block_and_refund') {
+        await write({
+          address: CONTRACT_ADDRESS,
+          functionName: 'block_and_refund_pool',
+          args: [BigInt(pool.pool_id)],
+          poolId: pool.pool_id,
+          trackAction: 'block_and_refund_pool',
           trackTarget: String(pool.pool_id),
         });
       }
@@ -2224,6 +2291,99 @@ export default function PoolDetailDrawer() {
                 )}
               </div>
 
+              {/* Admin Actions Panel */}
+              {isAdmin && pool.state === 0 && writeStatus === 'idle' && (
+                <div className="border-t border-charcoal-light/20 pt-6 space-y-4">
+                  <span className="text-xs font-semibold text-brand-magenta tracking-widest uppercase block">
+                    Admin Controls
+                  </span>
+                  {pendingBlockAndRefund ? (
+                    pendingBlockAndRefund.status === 'pending' ? (
+                      <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
+                        <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
+                          Block and Refund
+                        </span>
+                        <p className="text-xs text-foreground/60 leading-relaxed font-light">
+                          Block and refund requested, processing on Bradbury.
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            disabled
+                            className="flex-1 py-3 bg-brand-gold/20 text-brand-gold/50 font-bold tracking-wide rounded-xl cursor-not-allowed text-sm flex items-center justify-center gap-2"
+                          >
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            Pending...
+                          </button>
+                          <a
+                            href={`https://explorer-bradbury.genlayer.com/tx/${pendingBlockAndRefund.txHash}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-3 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light rounded-xl text-foreground/75 hover:text-foreground transition-all cursor-pointer"
+                            title="View transaction on explorer"
+                          >
+                            <ExternalLink className="w-4 h-4" />
+                          </a>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-4 bg-brand-magenta/5 border border-brand-magenta/15 rounded-2xl p-4.5">
+                        <span className="text-xs font-semibold text-brand-magenta tracking-widest uppercase flex items-center gap-1.5">
+                          <AlertCircle className="w-4 h-4 shrink-0" />
+                          Transaction Stale
+                        </span>
+                        <p className="text-xs text-foreground/75 leading-relaxed font-light">
+                          Your block and refund transaction is taking longer than expected to finalize. Please verify on the explorer before dismissing or checking again.
+                        </p>
+                        <div className="text-[10px] font-mono text-foreground/50 truncate flex items-center justify-between bg-charcoal-dark/50 border border-charcoal-light/10 px-2.5 py-1.5 rounded-lg select-all">
+                          <span className="truncate">{pendingBlockAndRefund.txHash}</span>
+                          <a
+                            href={`https://explorer-bradbury.genlayer.com/tx/${pendingBlockAndRefund.txHash}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-foreground/40 hover:text-foreground transition-all ml-2 shrink-0"
+                            title="View transaction on explorer"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" />
+                          </a>
+                        </div>
+                        <div className="flex gap-2.5">
+                          <button
+                            type="button"
+                            disabled={isCheckingBlockAndRefund}
+                            onClick={handleCheckPendingBlockAndRefundAgain}
+                            className="flex-1 py-2 bg-brand-gold hover:bg-brand-gold/90 text-charcoal-dark text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                          >
+                            {isCheckingBlockAndRefund && <Loader2 className="w-3 h-3 animate-spin" />}
+                            Check Again
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => usePendingWritesStore.getState().removePendingWrite(pendingBlockAndRefund.key)}
+                            className="flex-1 py-2 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light text-xs font-bold text-foreground rounded-xl transition-all cursor-pointer"
+                          >
+                            Dismiss
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  ) : (
+                    <div className="space-y-4 bg-brand-magenta/5 border border-brand-magenta/15 rounded-2xl p-4.5">
+                      <p className="text-xs text-foreground/60 leading-relaxed font-light">
+                        As the contract administrator, you can block this pool and trigger a refund. The creation fee will not be returned to the creator.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={handleBlockAndRefundClick}
+                        className="w-full py-3 bg-brand-magenta hover:bg-brand-magenta/90 text-foreground font-bold tracking-wide rounded-xl transition-all cursor-pointer shadow-md text-sm"
+                      >
+                        Block and Refund Pool
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Timeline Deadlines */}
               <div className="space-y-3.5 border-t border-charcoal-light/20 pt-6">
                 <div className="flex items-center gap-2 text-xs font-semibold text-foreground/45 tracking-widest uppercase">
@@ -2327,6 +2487,8 @@ export default function PoolDetailDrawer() {
               ? 'Confirm Refund Claim'
               : activeAction === 'cancel'
               ? 'Confirm Cancel Event'
+              : activeAction === 'block_and_refund'
+              ? 'Confirm Block and Refund Pool'
               : 'Confirm Staking Action'
           }
         >
@@ -2348,6 +2510,26 @@ export default function PoolDetailDrawer() {
               </p>
               <p className="text-[11px] text-foreground/45 italic leading-snug">
                 This process involves fetching web resources, processing LLM queries, and reaching consensus. It can take several minutes to complete on-chain.
+              </p>
+            </div>
+          ) : activeAction === 'block_and_refund' ? (
+            <div>
+              <p className="mb-3">Please review the details below before signing the transaction in your wallet:</p>
+              <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-2.5 mb-4">
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">Event ID</span>
+                  <span className="font-semibold text-foreground font-mono">#{pool.pool_id}</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-foreground/45">Action</span>
+                  <span className="font-semibold text-brand-magenta font-display uppercase">Block and Refund Pool</span>
+                </div>
+              </div>
+              <p className="text-xs text-foreground/75 mb-3 leading-relaxed">
+                This blocks the event, sets it to REFUNDED (reason: blocked by admin), lets all participants reclaim their stakes via claim refund, and the creation fee is not returned to the creator.
+              </p>
+              <p className="text-[11px] text-foreground/45 italic leading-snug">
+                Transactions on GenLayer Bradbury have a finality window of 25 to 40 minutes.
               </p>
             </div>
           ) : activeAction === 'force_refund' ? (
