@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { usePendingWritesStore } from '../store/pendingWrites';
-import { checkJoinPoolPredicate, getPoolCount } from '../services/contract';
+import { checkJoinPoolPredicate, getPoolCount, getStake, getPoolSummary } from '../services/contract';
 import { usePoolsStore } from '../store/pools';
 
 const POLL_INTERVAL = 30000; // 30 seconds
@@ -55,6 +55,38 @@ export default function PendingWritesReconciler() {
             if (currentCount > preCount) {
               removePendingWrite(entry.key);
               // Refresh global pools list to update the client dashboard view
+              loadPools().catch(() => {});
+            }
+          } else if (entry.action === 'increase_stake') {
+            try {
+              const stake = await getStake(Number(entry.target), entry.wallet);
+              const preStakeAmount = BigInt(entry.metadata?.preStakeAmount || '0');
+              if (stake && BigInt(stake.amount) > preStakeAmount) {
+                removePendingWrite(entry.key);
+                loadPools().catch(() => {});
+              }
+            } catch (err: any) {
+              const errMsg = err?.message?.toLowerCase() || '';
+              const errDetails = err?.details?.toLowerCase() || '';
+              const errData = (err?.data || err?.cause?.data || '').toLowerCase();
+              const errStr = JSON.stringify(err || '').toLowerCase();
+              
+              // Catch and ignore no stake errors which occur if the transaction has not landed yet
+              const isNoStake =
+                errMsg.includes('no stake') ||
+                errDetails.includes('no stake') ||
+                errData.includes('6e6f207374616b65') ||
+                errStr.includes('no stake') ||
+                errStr.includes('6e6f207374616b65');
+                
+              if (!isNoStake) {
+                throw err;
+              }
+            }
+          } else if (entry.action === 'cancel_pool') {
+            const p = await getPoolSummary(Number(entry.target));
+            if (p && p.state !== 0) {
+              removePendingWrite(entry.key);
               loadPools().catch(() => {});
             }
           }

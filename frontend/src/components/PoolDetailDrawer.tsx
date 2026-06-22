@@ -20,7 +20,7 @@ import { useTrackedContractWrite } from '../hooks/useTrackedContractWrite';
 import { usePendingWritesStore } from '../store/pendingWrites';
 import { useTxStore } from '../store/transactions';
 import ConfirmModal from './ConfirmModal';
-import { getPool, Pool, weiToGen, stateLabel, truncateAddress, CONTRACT_ADDRESS, getStake, Stake, checkJoinPoolPredicate } from '../services/contract';
+import { getPool, Pool, weiToGen, stateLabel, truncateAddress, CONTRACT_ADDRESS, getStake, Stake, checkJoinPoolPredicate, getPoolSummary } from '../services/contract';
 
 
 /**
@@ -214,6 +214,10 @@ export default function PoolDetailDrawer() {
 
   const [isSubmittingJoin, setIsSubmittingJoin] = useState<boolean>(false);
   const [isCheckingJoin, setIsCheckingJoin] = useState<boolean>(false);
+  const [isCheckingIncrease, setIsCheckingIncrease] = useState<boolean>(false);
+  const [isCheckingCancel, setIsCheckingCancel] = useState<boolean>(false);
+  const [isDismissAcknowledged, setIsDismissAcknowledged] = useState<boolean>(false);
+  const [showDismissAcknowledge, setShowDismissAcknowledge] = useState<boolean>(false);
 
   const pendingWrites = usePendingWritesStore((state) => state.entries);
   const pendingJoin = selectedPoolId && connectedAddress
@@ -221,6 +225,24 @@ export default function PoolDetailDrawer() {
         (w) =>
           w.wallet === connectedAddress.toLowerCase() &&
           w.action === 'join_pool' &&
+          w.target === String(selectedPoolId)
+      )
+    : undefined;
+
+  const pendingIncrease = selectedPoolId && connectedAddress
+    ? pendingWrites.find(
+        (w) =>
+          w.wallet === connectedAddress.toLowerCase() &&
+          w.action === 'increase_stake' &&
+          w.target === String(selectedPoolId)
+      )
+    : undefined;
+
+  const pendingCancel = selectedPoolId && connectedAddress
+    ? pendingWrites.find(
+        (w) =>
+          w.wallet === connectedAddress.toLowerCase() &&
+          w.action === 'cancel_pool' &&
           w.target === String(selectedPoolId)
       )
     : undefined;
@@ -245,6 +267,24 @@ export default function PoolDetailDrawer() {
     prevPendingJoinRef.current = pendingJoin;
   }, [pendingJoin, selectedPoolId, connectedAddress, fetchUserStake, fetchPoolDetail]);
 
+  const prevPendingIncreaseRef = React.useRef(pendingIncrease);
+  useEffect(() => {
+    if (prevPendingIncreaseRef.current && !pendingIncrease && selectedPoolId) {
+      fetchUserStake(selectedPoolId, connectedAddress);
+      fetchPoolDetail(selectedPoolId);
+    }
+    prevPendingIncreaseRef.current = pendingIncrease;
+  }, [pendingIncrease, selectedPoolId, connectedAddress, fetchUserStake, fetchPoolDetail]);
+
+  const prevPendingCancelRef = React.useRef(pendingCancel);
+  useEffect(() => {
+    if (prevPendingCancelRef.current && !pendingCancel && selectedPoolId) {
+      fetchUserStake(selectedPoolId, connectedAddress);
+      fetchPoolDetail(selectedPoolId);
+    }
+    prevPendingCancelRef.current = pendingCancel;
+  }, [pendingCancel, selectedPoolId, connectedAddress, fetchUserStake, fetchPoolDetail]);
+
   const handleCheckPendingJoinAgain = async () => {
     if (!pendingJoin || !selectedPoolId || !connectedAddress) return;
     setIsCheckingJoin(true);
@@ -266,6 +306,67 @@ export default function PoolDetailDrawer() {
       console.error('Manual validation query failed:', err);
     } finally {
       setIsCheckingJoin(false);
+    }
+  };
+
+  const handleCheckPendingIncreaseAgain = async () => {
+    if (!pendingIncrease || !selectedPoolId || !connectedAddress) return;
+    setIsCheckingIncrease(true);
+    try {
+      const stake = await getStake(selectedPoolId, connectedAddress);
+      const preStakeAmount = BigInt(pendingIncrease.metadata?.preStakeAmount || '0');
+      if (stake && BigInt(stake.amount) > preStakeAmount) {
+        usePendingWritesStore.getState().removePendingWrite(pendingIncrease.key);
+      } else {
+        // Reset timestamp and status to resume reconciler background tracking
+        usePendingWritesStore.getState().addPendingWrite(
+          connectedAddress,
+          pendingIncrease.action,
+          pendingIncrease.target,
+          pendingIncrease.txHash,
+          pendingIncrease.metadata
+        );
+      }
+    } catch (err: any) {
+      const errMsg = err?.message?.toLowerCase() || '';
+      const errDetails = err?.details?.toLowerCase() || '';
+      const errData = (err?.data || err?.cause?.data || '').toLowerCase();
+      const errStr = JSON.stringify(err || '').toLowerCase();
+      const isNoStake =
+        errMsg.includes('no stake') ||
+        errDetails.includes('no stake') ||
+        errData.includes('6e6f207374616b65') ||
+        errStr.includes('no stake') ||
+        errStr.includes('6e6f207374616b65');
+      if (!isNoStake) {
+        console.error('Manual validation query failed:', err);
+      }
+    } finally {
+      setIsCheckingIncrease(false);
+    }
+  };
+
+  const handleCheckPendingCancelAgain = async () => {
+    if (!pendingCancel || !selectedPoolId || !connectedAddress) return;
+    setIsCheckingCancel(true);
+    try {
+      const p = await getPoolSummary(selectedPoolId);
+      if (p && p.state !== 0) {
+        usePendingWritesStore.getState().removePendingWrite(pendingCancel.key);
+      } else {
+        // Reset timestamp and status to resume reconciler background tracking
+        usePendingWritesStore.getState().addPendingWrite(
+          connectedAddress,
+          pendingCancel.action,
+          pendingCancel.target,
+          pendingCancel.txHash,
+          pendingCancel.metadata
+        );
+      }
+    } catch (err) {
+      console.error('Manual validation query failed:', err);
+    } finally {
+      setIsCheckingCancel(false);
     }
   };
 
@@ -834,11 +935,40 @@ export default function PoolDetailDrawer() {
 
     try {
       if (activeAction === 'increase') {
+        let freshAmount = '0';
+        if (connectedAddress) {
+          try {
+            const stake = await getStake(pool.pool_id, connectedAddress);
+            if (stake) {
+              freshAmount = stake.amount;
+            }
+          } catch (err: any) {
+            const errMsg = err?.message?.toLowerCase() || '';
+            const errDetails = err?.details?.toLowerCase() || '';
+            const errData = (err?.data || err?.cause?.data || '').toLowerCase();
+            const errStr = JSON.stringify(err || '').toLowerCase();
+            
+            // Replicate no-stake validation to handle raw contract revert states
+            const isNoStake =
+              errMsg.includes('no stake') ||
+              errDetails.includes('no stake') ||
+              errData.includes('6e6f207374616b65') ||
+              errStr.includes('no stake') ||
+              errStr.includes('6e6f207374616b65');
+            
+            if (!isNoStake) {
+              throw err;
+            }
+          }
+        }
         await write({
           address: CONTRACT_ADDRESS,
           functionName: 'increase_stake',
           args: [BigInt(pool.pool_id)],
           value: genToWei(stakeAmount),
+          trackAction: 'increase_stake',
+          trackTarget: String(pool.pool_id),
+          trackMetadata: { preStakeAmount: freshAmount },
         });
       } else if (activeAction === 'join') {
         if (selectedOutcomeIndex === null) return;
@@ -889,6 +1019,8 @@ export default function PoolDetailDrawer() {
           functionName: 'cancel_pool',
           args: [BigInt(pool.pool_id)],
           poolId: pool.pool_id,
+          trackAction: 'cancel_pool',
+          trackTarget: String(pool.pool_id),
         });
       }
     } catch (err) {
@@ -1575,6 +1707,193 @@ export default function PoolDetailDrawer() {
                             'Join Event'
                           )}
                         </button>
+                      </div>
+                    )
+                  ) : pendingIncrease ? (
+                    pendingIncrease.status === 'pending' ? (
+                      <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
+                        <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
+                          Increase Stake
+                        </span>
+                        <p className="text-xs text-foreground/60 leading-relaxed font-light">
+                          Stake increase requested, processing on Bradbury.
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            disabled
+                            className="flex-1 py-3 bg-brand-gold/20 text-brand-gold/50 font-bold tracking-wide rounded-xl cursor-not-allowed text-sm flex items-center justify-center gap-2"
+                          >
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            Increase Pending
+                          </button>
+                          <a
+                            href={`https://explorer-bradbury.genlayer.com/tx/${pendingIncrease.txHash}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-3 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light rounded-xl text-foreground/75 hover:text-foreground transition-all cursor-pointer"
+                            title="View transaction on explorer"
+                          >
+                            <ExternalLink className="w-4 h-4" />
+                          </a>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-4 bg-brand-magenta/5 border border-brand-magenta/15 rounded-2xl p-4.5">
+                        <span className="text-xs font-semibold text-brand-magenta tracking-widest uppercase flex items-center gap-1.5">
+                          <AlertCircle className="w-4 h-4 shrink-0" />
+                          Transaction Stale
+                        </span>
+                        <p className="text-xs text-foreground/75 leading-relaxed font-light">
+                          Your stake increase transaction is taking longer than expected to finalize. Please verify on the explorer before dismissing or checking again.
+                        </p>
+                        
+                        {showDismissAcknowledge ? (
+                          <div className="space-y-3 bg-brand-magenta/5 border border-brand-magenta/15 rounded-xl p-3 mt-2">
+                            <span className="text-xs font-bold text-brand-magenta block">
+                              CRITICAL DOUBLE-STAKE WARNING
+                            </span>
+                            <p className="text-xs text-foreground/80 leading-normal font-light">
+                              Dismissing this marker does not cancel the on-chain transaction. If the original transaction still lands later, submitting a new stake increase will result in double-charging your wallet.
+                            </p>
+                            <label className="flex items-start gap-2.5 text-xs text-foreground/90 cursor-pointer select-none mt-2">
+                              <input
+                                type="checkbox"
+                                checked={isDismissAcknowledged}
+                                onChange={(e) => setIsDismissAcknowledged(e.target.checked)}
+                                className="mt-0.5"
+                              />
+                              <span>I acknowledge that the original transaction might still finalize and re-submitting can charge my wallet twice.</span>
+                            </label>
+                            <div className="flex gap-2 text-xs font-bold pt-1.5">
+                              <button
+                                type="button"
+                                disabled={!isDismissAcknowledged}
+                                onClick={() => {
+                                  usePendingWritesStore.getState().removePendingWrite(pendingIncrease.key);
+                                  setShowDismissAcknowledge(false);
+                                  setIsDismissAcknowledged(false);
+                                }}
+                                className="flex-1 py-2 bg-brand-magenta text-foreground disabled:opacity-40 disabled:cursor-not-allowed rounded-lg transition-all"
+                              >
+                                Confirm Dismiss
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setShowDismissAcknowledge(false);
+                                  setIsDismissAcknowledged(false);
+                                }}
+                                className="flex-1 py-2 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light text-foreground rounded-lg transition-all"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="text-[10px] font-mono text-foreground/50 truncate flex items-center justify-between bg-charcoal-dark/50 border border-charcoal-light/10 px-2.5 py-1.5 rounded-lg select-all">
+                              <span className="truncate">{pendingIncrease.txHash}</span>
+                              <a
+                                href={`https://explorer-bradbury.genlayer.com/tx/${pendingIncrease.txHash}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-foreground/40 hover:text-foreground transition-all ml-2 shrink-0"
+                                title="View transaction on explorer"
+                              >
+                                <ExternalLink className="w-3.5 h-3.5" />
+                              </a>
+                            </div>
+                            <div className="flex gap-2.5">
+                              <button
+                                type="button"
+                                disabled={isCheckingIncrease}
+                                onClick={handleCheckPendingIncreaseAgain}
+                                className="flex-1 py-2 bg-brand-gold hover:bg-brand-gold/90 text-charcoal-dark text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                              >
+                                {isCheckingIncrease && <Loader2 className="w-3 h-3 animate-spin" />}
+                                Check Again
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setShowDismissAcknowledge(true)}
+                                className="flex-1 py-2 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light text-xs font-bold text-foreground rounded-xl transition-all cursor-pointer"
+                              >
+                                Dismiss
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )
+                  ) : pendingCancel ? (
+                    pendingCancel.status === 'pending' ? (
+                      <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
+                        <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
+                          Cancel Event
+                        </span>
+                        <p className="text-xs text-foreground/60 leading-relaxed font-light">
+                          Cancellation requested, processing on Bradbury.
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            disabled
+                            className="flex-1 py-3 bg-brand-gold/20 text-brand-gold/50 font-bold tracking-wide rounded-xl cursor-not-allowed text-sm flex items-center justify-center gap-2"
+                          >
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            Cancel Pending
+                          </button>
+                          <a
+                            href={`https://explorer-bradbury.genlayer.com/tx/${pendingCancel.txHash}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-3 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light rounded-xl text-foreground/75 hover:text-foreground transition-all cursor-pointer"
+                            title="View transaction on explorer"
+                          >
+                            <ExternalLink className="w-4 h-4" />
+                          </a>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-4 bg-brand-magenta/5 border border-brand-magenta/15 rounded-2xl p-4.5">
+                        <span className="text-xs font-semibold text-brand-magenta tracking-widest uppercase flex items-center gap-1.5">
+                          <AlertCircle className="w-4 h-4 shrink-0" />
+                          Transaction Stale
+                        </span>
+                        <p className="text-xs text-foreground/75 leading-relaxed font-light">
+                          Your cancel transaction is taking longer than expected to finalize. Please verify on the explorer before dismissing or checking again.
+                        </p>
+                        <div className="text-[10px] font-mono text-foreground/50 truncate flex items-center justify-between bg-charcoal-dark/50 border border-charcoal-light/10 px-2.5 py-1.5 rounded-lg select-all">
+                          <span className="truncate">{pendingCancel.txHash}</span>
+                          <a
+                            href={`https://explorer-bradbury.genlayer.com/tx/${pendingCancel.txHash}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-foreground/40 hover:text-foreground transition-all ml-2 shrink-0"
+                            title="View transaction on explorer"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" />
+                          </a>
+                        </div>
+                        <div className="flex gap-2.5">
+                          <button
+                            type="button"
+                            disabled={isCheckingCancel}
+                            onClick={handleCheckPendingCancelAgain}
+                            className="flex-1 py-2 bg-brand-gold hover:bg-brand-gold/90 text-charcoal-dark text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                          >
+                            {isCheckingCancel && <Loader2 className="w-3 h-3 animate-spin" />}
+                            Check Again
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => usePendingWritesStore.getState().removePendingWrite(pendingCancel.key)}
+                            className="flex-1 py-2 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light text-xs font-bold text-foreground rounded-xl transition-all cursor-pointer"
+                          >
+                            Dismiss
+                          </button>
+                        </div>
                       </div>
                     )
                   ) : (
