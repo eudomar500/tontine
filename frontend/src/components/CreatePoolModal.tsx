@@ -478,6 +478,11 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
       setValidationError('Room name cannot exceed 64 characters');
       return false;
     }
+    // Prevent standard pools from using the reserved duel identifier
+    if (roomName.trim().toLowerCase().startsWith('duel:')) {
+      setValidationError('Room name cannot start with the reserved prefix "duel:"');
+      return false;
+    }
 
     setValidationError(null);
     return true;

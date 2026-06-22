@@ -6,6 +6,8 @@ import { usePoolsStore, selectFilteredPools, selectCategories } from '../store/p
 import PoolCard from './PoolCard';
 import PoolDetailDrawer from './PoolDetailDrawer';
 import CreatePoolModal from './CreatePoolModal';
+import DuelCard from './DuelCard';
+import CreateDuelModal from './CreateDuelModal';
 import { useWalletStore } from '../store/wallet';
 import { usePendingWritesStore } from '../store/pendingWrites';
 import { getPoolCount } from '../services/contract';
@@ -31,6 +33,8 @@ export default function PoolExplorer() {
   const [activeIndex, setActiveIndex] = useState(0);
   const [isMobile, setIsMobile] = useState(false);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [explorerTab, setExplorerTab] = useState<'events' | 'duels'>('events');
+  const [isCreateDuelModalOpen, setIsCreateDuelModalOpen] = useState(false);
 
   const pendingWrites = usePendingWritesStore((state) => state.entries);
   const removePendingWrite = usePendingWritesStore((state) => state.removePendingWrite);
@@ -100,7 +104,11 @@ export default function PoolExplorer() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  const count = pools.length;
+  const normalEvents = pools.filter((p) => !p.name || !p.name.trim().toLowerCase().startsWith('duel:'));
+  const duels = pools.filter((p) => p.name && p.name.trim().toLowerCase().startsWith('duel:'));
+
+  const activePools = explorerTab === 'events' ? normalEvents : duels;
+  const count = activePools.length;
 
   // Carousel actions
   const handlePrev = () => {
@@ -232,6 +240,36 @@ export default function PoolExplorer() {
 
   return (
     <div className="w-full flex flex-col items-center select-none animate-fade-in-up">
+      {/* Explorer Mode Switcher */}
+      <div className="flex items-center bg-charcoal-medium/30 p-1 border border-charcoal-light/35 rounded-2xl mb-8">
+        <button
+          onClick={() => {
+            setExplorerTab('events');
+            setSelectedCategory('All');
+          }}
+          className={`px-5 py-2 text-xs font-bold tracking-wider uppercase transition-all duration-200 cursor-pointer rounded-xl ${
+            explorerTab === 'events'
+              ? 'bg-brand-gold text-charcoal-dark shadow-md font-extrabold'
+              : 'text-foreground/60 hover:text-foreground'
+          }`}
+        >
+          Prediction Events
+        </button>
+        <button
+          onClick={() => {
+            setExplorerTab('duels');
+            setSelectedCategory('All');
+          }}
+          className={`px-5 py-2 text-xs font-bold tracking-wider uppercase transition-all duration-200 cursor-pointer rounded-xl ${
+            explorerTab === 'duels'
+              ? 'bg-brand-magenta text-foreground shadow-md font-extrabold'
+              : 'text-foreground/60 hover:text-foreground'
+          }`}
+        >
+          1v1 Duels
+        </button>
+      </div>
+
       {/* Category tabs navigation and Create Pool Trigger */}
       <div className="flex flex-col md:flex-row items-center justify-between w-full max-w-4xl gap-4 mb-12 px-4">
         <div className="flex flex-wrap items-center justify-center md:justify-start gap-2">
@@ -339,20 +377,36 @@ export default function PoolExplorer() {
               </div>
             )
           ) : (
-            <button
-              onClick={() => setIsCreateModalOpen(true)}
-              className="relative overflow-hidden px-5 py-2 flex items-center gap-1.5 bg-brand-gold/10 hover:bg-brand-gold/20 border border-brand-gold/30 text-brand-gold text-xs font-bold rounded-xl transition-all cursor-pointer font-display tracking-wider uppercase shadow-md shrink-0"
-            >
-              Create Event
-              <div 
-                className="border-beam-container" 
-                style={{
-                  '--border-beam-width': '1.5px',
-                  '--border-beam-dark-opacity': '0.45',
-                  '--border-beam-light-opacity': '0.25',
-                } as React.CSSProperties}
-              />
-            </button>
+            <div className="flex items-center gap-2.5">
+              <button
+                onClick={() => setIsCreateModalOpen(true)}
+                className="relative overflow-hidden px-4 py-2 flex items-center gap-1.5 bg-brand-gold/10 hover:bg-brand-gold/20 border border-brand-gold/30 text-brand-gold text-xs font-bold rounded-xl transition-all cursor-pointer font-display tracking-wider uppercase shadow-md shrink-0"
+              >
+                Create Event
+                <div 
+                  className="border-beam-container" 
+                  style={{
+                    '--border-beam-width': '1.5px',
+                    '--border-beam-dark-opacity': '0.45',
+                    '--border-beam-light-opacity': '0.25',
+                  } as React.CSSProperties}
+                />
+              </button>
+              <button
+                onClick={() => setIsCreateDuelModalOpen(true)}
+                className="relative overflow-hidden px-4 py-2 flex items-center gap-1.5 bg-brand-magenta/10 hover:bg-brand-magenta/20 border border-brand-magenta/30 text-brand-magenta text-xs font-bold rounded-xl transition-all cursor-pointer font-display tracking-wider uppercase shadow-md shrink-0"
+              >
+                Create Duel
+                <div 
+                  className="border-beam-container" 
+                  style={{
+                    '--border-beam-width': '1.5px',
+                    '--border-beam-dark-opacity': '0.45',
+                    '--border-beam-light-opacity': '0.25',
+                  } as React.CSSProperties}
+                />
+              </button>
+            </div>
           )}
         </div>
       </div>
@@ -407,8 +461,8 @@ export default function PoolExplorer() {
             </button>
           </div>
         </div>
-      ) : pools.length === 0 ? (
-        // Category-specific empty state handling
+      ) : activePools.length === 0 ? (
+        // Category-specific or tab-specific empty state handling
         <div className="w-full max-w-md mx-auto p-10 bg-charcoal-medium/30 border border-charcoal-light/30 rounded-2xl text-center shadow-lg animate-fade-in">
           <div className="flex justify-center mb-5">
             <div className="p-3 bg-charcoal-light/30 rounded-full text-foreground/50 border border-charcoal-light/50">
@@ -416,19 +470,19 @@ export default function PoolExplorer() {
             </div>
           </div>
           <h4 className="text-lg font-bold text-foreground mb-2">
-            {viewMode === 'mine' ? 'No Agreements Found' : 'No Events in Category'}
+            {explorerTab === 'duels' ? 'No Duels Found' : 'No Events in Category'}
           </h4>
           <p className="text-sm text-foreground/50 leading-relaxed font-light mb-6">
             {viewMode === 'mine'
-              ? 'You have not created or participated in any events yet.'
-              : `There are currently no active prediction events in the "${selectedCategory}" category.`}
+              ? 'You have not created or participated in any yet.'
+              : `There are currently no active ${explorerTab === 'duels' ? 'duels' : 'prediction events'} in the "${selectedCategory}" category.`}
           </p>
           {viewMode === 'mine' ? (
             <button
               onClick={() => setViewMode('all')}
               className="px-5 py-2.5 bg-charcoal-light hover:bg-charcoal-medium border border-charcoal-light rounded-xl text-sm font-semibold text-foreground transition-all cursor-pointer mx-auto"
             >
-              Show All Events
+              Show All
             </button>
           ) : (
             <button
@@ -439,14 +493,14 @@ export default function PoolExplorer() {
             </button>
           )}
         </div>
-      ) : (
+      ) : explorerTab === 'events' ? (
         <>
           {/* 3D Carousel Stage */}
           <div 
             className="relative w-full max-w-sm sm:max-w-md h-[480px] flex items-center justify-center"
             style={{ perspective: '1200px', transformStyle: 'preserve-3d' }}
           >
-            {pools.map((pool, idx) => {
+            {activePools.map((pool, idx) => {
               let offset = idx - activeIndex;
               if (count > 2) {
                 let diff = idx - activeIndex;
@@ -499,6 +553,18 @@ export default function PoolExplorer() {
             </div>
           )}
         </>
+      ) : (
+        /* Grid Layout for 1v1 Duels */
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 w-full max-w-6xl px-6">
+          {activePools.map((pool) => (
+            <DuelCard
+              key={pool.pool_id}
+              pool={pool}
+              isActive={true}
+              onClick={() => setSelectedPoolId(pool.pool_id)}
+            />
+          ))}
+        </div>
       )}
 
       {/* Sliding side drawer panel */}
@@ -508,6 +574,12 @@ export default function PoolExplorer() {
       <CreatePoolModal
         isOpen={isCreateModalOpen}
         onClose={() => setIsCreateModalOpen(false)}
+      />
+
+      {/* Create Duel modal form */}
+      <CreateDuelModal
+        isOpen={isCreateDuelModalOpen}
+        onClose={() => setIsCreateDuelModalOpen(false)}
       />
     </div>
   );

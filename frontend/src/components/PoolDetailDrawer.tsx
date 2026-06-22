@@ -22,6 +22,7 @@ import { useTxStore } from '../store/transactions';
 import ConfirmModal from './ConfirmModal';
 import { getPool, Pool, weiToGen, stateLabel, truncateAddress, CONTRACT_ADDRESS, getStake, Stake, checkJoinPoolPredicate, getPoolSummary } from '../services/contract';
 import { useAdminStore } from '../store/admin';
+import Avatar from 'boring-avatars';
 
 
 /**
@@ -64,6 +65,7 @@ export default function PoolDetailDrawer() {
   const [isConfirmOpen, setIsConfirmOpen] = useState<boolean>(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [userStake, setUserStake] = useState<Stake | null>(null);
+  const [creatorOutcomeIndex, setCreatorOutcomeIndex] = useState<number | null>(null);
   const [isStakeLoading, setIsStakeLoading] = useState<boolean>(false);
   const [isStakeChecked, setIsStakeChecked] = useState<boolean>(false);
   const [activeAction, setActiveAction] = useState<'join' | 'increase' | 'resolve' | 'claim' | 'force_refund' | 'claim_refund' | 'cancel' | 'block_and_refund' | 'emergency_withdraw' | null>(null);
@@ -78,6 +80,14 @@ export default function PoolDetailDrawer() {
   const [isClaimRefundReconciling, setIsClaimRefundReconciling] = useState<boolean>(false);
 
   const [localMarker, setLocalMarker] = useState<{ txHash: string; timestamp: number } | null>(null);
+  const isDuel = !!(pool && pool.name && pool.name.trim().toLowerCase().startsWith('duel:'));
+
+  // Lock join outcome index to opponent's side for duels
+  useEffect(() => {
+    if (isDuel && creatorOutcomeIndex !== null) {
+      setSelectedOutcomeIndex(1 - creatorOutcomeIndex);
+    }
+  }, [isDuel, creatorOutcomeIndex]);
   const [forceRefundMarker, setForceRefundMarker] = useState<{ txHash: string; timestamp: number } | null>(null);
   const [claimRefundMarker, setClaimRefundMarker] = useState<{ txHash: string; timestamp: number } | null>(null);
   const [claimWinningsMarker, setClaimWinningsMarker] = useState<{ txHash: string; timestamp: number } | null>(null);
@@ -174,6 +184,19 @@ export default function PoolDetailDrawer() {
     try {
       const detail = await getPool(id);
       setPool(detail);
+      // Fetch challenger's outcome choice for 1v1 duel structure
+      if (detail.name && detail.name.trim().toLowerCase().startsWith('duel:')) {
+        try {
+          const stake = await getStake(id, detail.creator);
+          if (stake) {
+            setCreatorOutcomeIndex(stake.outcome_index);
+          }
+        } catch (err) {
+          console.warn('Failed to retrieve challenger stake choice for duel:', err);
+        }
+      } else {
+        setCreatorOutcomeIndex(null);
+      }
       onComplete?.();
     } catch (err: any) {
       setError(err?.message || 'Failed to retrieve pool details.');
@@ -990,7 +1013,11 @@ export default function PoolDetailDrawer() {
   const etaText = getEtaText();
 
   const handleJoinClick = () => {
-    if (selectedOutcomeIndex === null) {
+    if (isDuel && creatorOutcomeIndex === null) {
+      setValidationError('Outcome data is still loading');
+      return;
+    }
+    if (selectedOutcomeIndex === null || isNaN(selectedOutcomeIndex)) {
       setValidationError('Please select an outcome');
       return;
     }
@@ -1195,7 +1222,7 @@ export default function PoolDetailDrawer() {
           <div className="flex flex-col gap-1.5">
             <div className="flex items-center gap-2">
               <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase">
-                Event #{selectedPoolId}
+                {isDuel ? 'Duel' : 'Event'} #{selectedPoolId}
               </span>
               {pool?.category && pool.category.trim() !== '' && (
                 <span className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-charcoal-light/30 text-foreground/60 border border-charcoal-light/20 uppercase tracking-wider">
@@ -1205,7 +1232,7 @@ export default function PoolDetailDrawer() {
             </div>
             {pool?.name && pool.name.trim() !== '' && (
               <span className="text-xs font-semibold text-foreground/75">
-                Room: <span className="font-normal text-foreground/90">{pool.name}</span>
+                {isDuel ? 'Title: ' : 'Room: '}<span className="font-normal text-foreground/90">{isDuel && pool.name.toLowerCase().startsWith('duel:') ? pool.name.slice(5) : pool.name}</span>
               </span>
             )}
             {pool && (
@@ -1291,68 +1318,201 @@ export default function PoolDetailDrawer() {
                   Outcomes & Stakes
                 </span>
 
-                {/* Staked Proportion Bar */}
-                <div className="space-y-2">
-                  <div className="h-2 w-full rounded-full overflow-hidden flex bg-charcoal-light/20">
-                    {proportions.map((percentage, index) => {
-                      let bgColor = 'bg-foreground/20';
-                      if (index === 0) bgColor = 'bg-brand-gold';
-                      else if (index === 1) bgColor = 'bg-brand-magenta';
-                      else if (index === 2) bgColor = 'bg-foreground/55';
+                {isDuel ? (
+                  /* Head-to-Head 1v1 Layout for Drawer */
+                  (() => {
+                    const p1Address = pool.creator;
+                    const p2Address = pool.whitelist.find((addr) => addr.toLowerCase() !== p1Address.toLowerCase()) || '';
+                    const p1OutcomeIndex = creatorOutcomeIndex ?? 0;
+                    const p2OutcomeIndex = 1 - p1OutcomeIndex;
 
-                      return (
-                        <div
-                          key={index}
-                          style={{ width: `${percentage}%` }}
-                          className={`h-full transition-all duration-500 ${bgColor}`}
-                        />
-                      );
-                    })}
-                  </div>
-                  <div className="flex justify-between items-center text-[10px] text-foreground/40 uppercase tracking-wider">
-                    <span>Relative distribution</span>
-                    <span>{weiToGen(pool.total_pool)} GEN Staked</span>
-                  </div>
-                </div>
+                    const p1OutcomeLabel = pool.outcomes[p1OutcomeIndex]?.label || 'Outcome A';
+                    const p2OutcomeLabel = pool.outcomes[p2OutcomeIndex]?.label || 'Outcome B';
 
-                {/* Outcomes Table */}
-                <div className="space-y-2.5">
-                  {pool.outcomes.map((outcome, idx) => {
-                    const isWinner = pool.state === 2 && pool.winning_outcome_index !== 255 && pool.winning_outcome_index === idx;
+                    const p1StakeStr = pool.outcomes[p1OutcomeIndex]?.total_staked || '0';
+                    const p2StakeStr = pool.outcomes[p2OutcomeIndex]?.total_staked || '0';
+
+                    const p1Stake = BigInt(p1StakeStr);
+                    const p2Stake = BigInt(p2StakeStr);
+
+                    const p2Joined = p2Stake > 0n;
+
+                    const p1Won = pool.state === 2 && pool.winning_outcome_index === p1OutcomeIndex;
+                    const p2Won = pool.state === 2 && pool.winning_outcome_index === p2OutcomeIndex;
+
                     return (
-                      <div
-                        key={idx}
-                        className={`flex items-center justify-between p-3.5 rounded-xl border transition-all duration-300 ${
-                          isWinner
-                            ? 'bg-brand-gold/10 border-brand-gold/45 text-brand-gold'
-                            : 'bg-charcoal-medium/40 border-charcoal-light/15 text-foreground/80'
-                        }`}
-                      >
-                        <div className="flex flex-col">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-semibold">{outcome.label}</span>
-                            {isWinner && (
-                              <span className="text-[9px] px-1.5 py-0.5 bg-brand-gold text-charcoal-dark uppercase tracking-wider font-extrabold rounded-md">
-                                Winner
+                      <div className="flex flex-col gap-6">
+                        {/* Relative stake bar for Duel */}
+                        <div className="space-y-2 bg-charcoal-medium/10 border border-charcoal-light/10 p-4 rounded-2xl">
+                          <div className="h-2 w-full rounded-full overflow-hidden flex bg-charcoal-light/20">
+                            {(() => {
+                              const totalStake = p1Stake + p2Stake;
+                              let p1Percentage = 50;
+                              let p2Percentage = 50;
+                              if (totalStake > 0n) {
+                                p1Percentage = Number((p1Stake * 100n) / totalStake);
+                                p2Percentage = 100 - p1Percentage;
+                              }
+                              return (
+                                <>
+                                  <div style={{ width: `${p1Percentage}%` }} className="h-full bg-brand-gold transition-all duration-500" />
+                                  <div style={{ width: `${p2Percentage}%` }} className="h-full bg-brand-magenta transition-all duration-500" />
+                                </>
+                              );
+                            })()}
+                          </div>
+                          <div className="flex justify-between items-center text-[10px] text-foreground/40 uppercase tracking-wider">
+                            <span>Challenger ({creatorOutcomeIndex !== null ? proportions[p1OutcomeIndex]?.toFixed(0) : '50'}%)</span>
+                            <span>Opponent ({creatorOutcomeIndex !== null ? proportions[p2OutcomeIndex]?.toFixed(0) : '50'}%)</span>
+                          </div>
+                        </div>
+
+                        {/* Head-to-Head Cards */}
+                        <div className="grid grid-cols-2 gap-4 relative">
+                          {/* Left Column: Challenger */}
+                          <div className={`p-4 bg-charcoal-medium/20 border rounded-2xl flex flex-col items-center text-center space-y-3 relative ${p1Won ? 'border-brand-gold' : 'border-charcoal-light/15'}`}>
+                            <div className="relative">
+                              <div className="flex items-center justify-center rounded-full overflow-hidden w-12 h-12 border-2 border-charcoal-light/40">
+                                <Avatar
+                                  size={48}
+                                  name={p1Address}
+                                  variant="marble"
+                                  colors={['#c9a227', '#b23a6e', '#f1ece3', '#1f1f22', '#0b0b0c']}
+                                />
+                              </div>
+                              {p1Won && (
+                                <span className="absolute -top-1.5 -right-1.5 text-[8px] font-bold px-1 py-0.5 bg-brand-gold text-charcoal-dark rounded uppercase tracking-wider">
+                                  Winner
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex flex-col gap-0.5">
+                              <span className="text-[10px] text-foreground/45 font-mono">Challenger</span>
+                              <span className="text-xs font-semibold text-foreground truncate max-w-[120px] select-all">
+                                {truncateAddress(p1Address)}
                               </span>
+                            </div>
+                            <div className="flex flex-col gap-1.5 pt-2 border-t border-charcoal-light/10 w-full">
+                              <span className="text-xs font-bold text-foreground leading-snug line-clamp-2" title={p1OutcomeLabel}>
+                                {p1OutcomeLabel}
+                              </span>
+                              <span className="text-sm font-black text-brand-gold">
+                                {weiToGen(p1StakeStr)} GEN
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Right Column: Opponent */}
+                          <div className={`p-4 bg-charcoal-medium/20 border rounded-2xl flex flex-col items-center text-center space-y-3 relative ${p2Won ? 'border-brand-gold' : 'border-charcoal-light/15'}`}>
+                            {p2Address ? (
+                              <>
+                                <div className="relative">
+                                  <div className={`flex items-center justify-center rounded-full overflow-hidden w-12 h-12 border-2 border-charcoal-light/40 ${!p2Joined ? 'opacity-40' : ''}`}>
+                                    <Avatar
+                                      size={48}
+                                      name={p2Address}
+                                      variant="marble"
+                                      colors={['#c9a227', '#b23a6e', '#f1ece3', '#1f1f22', '#0b0b0c']}
+                                    />
+                                  </div>
+                                  {p2Won && (
+                                    <span className="absolute -top-1.5 -right-1.5 text-[8px] font-bold px-1 py-0.5 bg-brand-gold text-charcoal-dark rounded uppercase tracking-wider">
+                                      Winner
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="text-[10px] text-foreground/45 font-mono">Opponent</span>
+                                  <span className="text-xs font-semibold text-foreground truncate max-w-[120px] select-all">
+                                    {truncateAddress(p2Address)}
+                                  </span>
+                                </div>
+                                <div className="flex flex-col gap-1.5 pt-2 border-t border-charcoal-light/10 w-full">
+                                  <span className="text-xs font-bold text-foreground leading-snug line-clamp-2" title={p2OutcomeLabel}>
+                                    {p2OutcomeLabel}
+                                  </span>
+                                  <span className={`text-sm font-black ${p2Joined ? 'text-brand-gold' : 'text-foreground/30 font-light'}`}>
+                                    {p2Joined ? `${weiToGen(p2StakeStr)} GEN` : 'Awaiting Join'}
+                                  </span>
+                                </div>
+                              </>
+                            ) : (
+                              <div className="flex-grow flex flex-col items-center justify-center py-6">
+                                <span className="text-xs text-foreground/30 font-light">No Opponent Whitelisted</span>
+                              </div>
                             )}
                           </div>
-                          <span className="text-[10px] text-foreground/40 mt-0.5">
-                            {Number(outcome.participants_count)} {Number(outcome.participants_count) === 1 ? 'participant' : 'participants'}
-                          </span>
-                        </div>
-                        <div className="text-right">
-                          <span className="text-sm font-bold block">
-                            {weiToGen(outcome.total_staked)} GEN
-                          </span>
-                          <span className="text-[10px] text-foreground/45">
-                            {proportions[idx]?.toFixed(1)}%
-                          </span>
                         </div>
                       </div>
                     );
-                  })}
-                </div>
+                  })()
+                ) : (
+                  /* Standard Vertical Layout */
+                  <>
+                    {/* Staked Proportion Bar */}
+                    <div className="space-y-2">
+                      <div className="h-2 w-full rounded-full overflow-hidden flex bg-charcoal-light/20">
+                        {proportions.map((percentage, index) => {
+                          let bgColor = 'bg-foreground/20';
+                          if (index === 0) bgColor = 'bg-brand-gold';
+                          else if (index === 1) bgColor = 'bg-brand-magenta';
+                          else if (index === 2) bgColor = 'bg-foreground/55';
+
+                          return (
+                            <div
+                              key={index}
+                              style={{ width: `${percentage}%` }}
+                              className={`h-full transition-all duration-500 ${bgColor}`}
+                            />
+                          );
+                        })}
+                      </div>
+                      <div className="flex justify-between items-center text-[10px] text-foreground/40 uppercase tracking-wider">
+                        <span>Relative distribution</span>
+                        <span>{weiToGen(pool.total_pool)} GEN Staked</span>
+                      </div>
+                    </div>
+
+                    {/* Outcomes Table */}
+                    <div className="space-y-2.5">
+                      {pool.outcomes.map((outcome, idx) => {
+                        const isWinner = pool.state === 2 && pool.winning_outcome_index !== 255 && pool.winning_outcome_index === idx;
+                        return (
+                          <div
+                            key={idx}
+                            className={`flex items-center justify-between p-3.5 rounded-xl border transition-all duration-300 ${
+                              isWinner
+                                ? 'bg-brand-gold/10 border-brand-gold/45 text-brand-gold'
+                                : 'bg-charcoal-medium/40 border-charcoal-light/15 text-foreground/80'
+                            }`}
+                          >
+                            <div className="flex flex-col">
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-semibold">{outcome.label}</span>
+                                {isWinner && (
+                                  <span className="text-[9px] px-1.5 py-0.5 bg-brand-gold text-charcoal-dark uppercase tracking-wider font-extrabold rounded-md">
+                                    Winner
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-[10px] text-foreground/40 mt-0.5">
+                                {Number(outcome.participants_count)} {Number(outcome.participants_count) === 1 ? 'participant' : 'participants'}
+                              </span>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-sm font-bold block">
+                                {weiToGen(outcome.total_staked)} GEN
+                              </span>
+                              <span className="text-[10px] text-foreground/45">
+                                {proportions[idx]?.toFixed(1)}%
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
               </div>
 
               {/* Join Pool Action UI Panel */}
@@ -1878,28 +2038,41 @@ export default function PoolDetailDrawer() {
                         {/* Outcome Choice Selector */}
                         <div className="space-y-2">
                           <span className="text-[10px] uppercase font-bold tracking-widest text-foreground/40 block">
-                            Select Outcome
+                            {isDuel ? 'Your Outcome' : 'Select Outcome'}
                           </span>
-                          <div className="grid grid-cols-2 gap-2">
-                            {pool.outcomes.map((outcome, idx) => {
-                              const isSelected = selectedOutcomeIndex === idx;
-                              return (
-                                <button
-                                  key={idx}
-                                  type="button"
-                                  disabled={isSubmittingJoin}
-                                  onClick={() => setSelectedOutcomeIndex(idx)}
-                                  className={`px-4 py-3 rounded-xl border text-sm font-semibold tracking-wide transition-all cursor-pointer text-center truncate ${
-                                    isSelected
-                                      ? 'bg-brand-gold text-charcoal-dark border-brand-gold shadow-md'
-                                      : 'bg-charcoal-dark/40 hover:bg-charcoal-light border-charcoal-light text-foreground/80'
-                                  }`}
-                                >
-                                  {outcome.label}
-                                </button>
-                              );
-                            })}
-                          </div>
+                          {isDuel ? (
+                            creatorOutcomeIndex !== null ? (
+                              <div className="px-4 py-3 rounded-xl border border-brand-magenta/30 bg-brand-magenta/10 text-foreground font-semibold text-sm tracking-wide shadow-sm flex items-center justify-between">
+                                <span>{pool.outcomes[1 - creatorOutcomeIndex]?.label || 'Opponent Outcome'}</span>
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-brand-magenta bg-brand-magenta/10 px-2 py-0.5 border border-brand-magenta/20 rounded-md">Locked (Opponent Side)</span>
+                              </div>
+                            ) : (
+                              <div className="px-4 py-3 rounded-xl border border-charcoal-light/20 bg-charcoal-dark/40 text-foreground/40 font-semibold text-sm tracking-wide animate-pulse">
+                                Loading outcome...
+                              </div>
+                            )
+                          ) : (
+                            <div className="grid grid-cols-2 gap-2">
+                              {pool.outcomes.map((outcome, idx) => {
+                                const isSelected = selectedOutcomeIndex === idx;
+                                return (
+                                  <button
+                                    key={idx}
+                                    type="button"
+                                    disabled={isSubmittingJoin}
+                                    onClick={() => setSelectedOutcomeIndex(idx)}
+                                    className={`px-4 py-3 rounded-xl border text-sm font-semibold tracking-wide transition-all cursor-pointer text-center truncate ${
+                                      isSelected
+                                        ? 'bg-brand-gold text-charcoal-dark border-brand-gold shadow-md'
+                                        : 'bg-charcoal-dark/40 hover:bg-charcoal-light border-charcoal-light text-foreground/80'
+                                    }`}
+                                  >
+                                    {outcome.label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
                         </div>
  
                         {/* Stake Amount Input field */}
@@ -1940,10 +2113,10 @@ export default function PoolDetailDrawer() {
  
                         <button
                           type="button"
-                          disabled={isSubmittingJoin}
+                          disabled={isSubmittingJoin || (isDuel && creatorOutcomeIndex === null)}
                           onClick={handleJoinClick}
                           className={`w-full py-3 font-bold tracking-wide rounded-xl transition-all shadow-md text-sm flex items-center justify-center gap-2 ${
-                            isSubmittingJoin
+                            isSubmittingJoin || (isDuel && creatorOutcomeIndex === null)
                               ? 'bg-foreground/20 text-background/55 cursor-not-allowed'
                               : 'bg-foreground hover:bg-warm-white text-background cursor-pointer'
                           }`}
