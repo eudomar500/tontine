@@ -80,7 +80,30 @@ export default function PoolDetailDrawer() {
   const [isClaimRefundReconciling, setIsClaimRefundReconciling] = useState<boolean>(false);
 
   const [localMarker, setLocalMarker] = useState<{ txHash: string; timestamp: number } | null>(null);
-  const isDuel = !!(pool && (pool.is_open_duel || (pool.name && pool.name.trim().toLowerCase().startsWith('duel:'))));
+  const pools = usePoolsStore((state) => state.pools);
+  const selectedPoolSummary = selectedPoolId !== null ? pools.find((p) => p.pool_id === selectedPoolId) : undefined;
+
+  // Resolve duel status synchronously from cached summary, fallback to loaded pool details,
+  // or return null if neither is available during initial cache-miss loading.
+  const isDuelResolved = selectedPoolSummary
+    ? (selectedPoolSummary.is_open_duel || !!(selectedPoolSummary.name && selectedPoolSummary.name.trim().toLowerCase().startsWith('duel:')))
+    : pool
+      ? (pool.is_open_duel || !!(pool.name && pool.name.trim().toLowerCase().startsWith('duel:')))
+      : null;
+
+  const isDuel = isDuelResolved === true;
+
+  // Resolve header type label or render a temporary loading indicator during cache-miss loads.
+  const renderHeaderLabel = () => {
+    if (isDuelResolved === null) {
+      return <span className="inline-block w-8 h-3.5 bg-charcoal-light/25 rounded animate-pulse align-middle" />;
+    }
+    return isDuelResolved ? 'Duel' : 'Event';
+  };
+
+  const category = pool?.category || selectedPoolSummary?.category;
+  const name = pool?.name || selectedPoolSummary?.name;
+  const state = pool !== null ? pool.state : selectedPoolSummary?.state;
 
   // Lock join outcome index to opponent's side for duels
   useEffect(() => {
@@ -1264,25 +1287,25 @@ export default function PoolDetailDrawer() {
         {/* Fixed Header Section */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-charcoal-light/25 bg-charcoal-medium/20">
           <div className="flex flex-col gap-1.5">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase">
-                {isDuel ? 'Duel' : 'Event'} #{selectedPoolId}
+            <div className="flex items-center gap-2 animate-fade-in">
+              <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase inline-flex items-center gap-1">
+                {renderHeaderLabel()} #{selectedPoolId}
               </span>
-              {pool?.category && pool.category.trim() !== '' && (
+              {category && category.trim() !== '' && (
                 <span className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-charcoal-light/30 text-foreground/60 border border-charcoal-light/20 uppercase tracking-wider">
-                  {pool.category}
+                  {category}
                 </span>
               )}
             </div>
-            {pool?.name && pool.name.trim() !== '' && (
+            {name && name.trim() !== '' && (
               <span className="text-xs font-semibold text-foreground/75">
-                {isDuel ? 'Title: ' : 'Room: '}<span className="font-normal text-foreground/90">{isDuel && pool.name.toLowerCase().startsWith('duel:') ? pool.name.slice(5) : pool.name}</span>
+                {isDuel ? 'Title: ' : 'Room: '}<span className="font-normal text-foreground/90">{isDuel && name.toLowerCase().startsWith('duel:') ? name.slice(5) : name}</span>
               </span>
             )}
-            {pool && (
+            {state !== undefined && (
               <div>
-                <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full border ${getBadgeStyles(pool.state)}`}>
-                  {stateLabel(pool.state)}
+                <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full border ${getBadgeStyles(state)}`}>
+                  {stateLabel(state)}
                 </span>
               </div>
             )}
@@ -2901,7 +2924,7 @@ export default function PoolDetailDrawer() {
               <p className="mb-3">Please review the details below before signing the transaction in your wallet:</p>
               <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-2.5 mb-4">
                 <div className="flex justify-between text-xs">
-                  <span className="text-foreground/45">Event ID</span>
+                  <span className="text-foreground/45">{isDuel ? 'Duel ID' : 'Event ID'}</span>
                   <span className="font-semibold text-foreground font-mono">#{pool.pool_id}</span>
                 </div>
                 <div className="flex justify-between text-xs">
@@ -2921,7 +2944,7 @@ export default function PoolDetailDrawer() {
               <p className="mb-3">Please review the details below before signing the transaction in your wallet:</p>
               <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-2.5 mb-4">
                 <div className="flex justify-between text-xs">
-                  <span className="text-foreground/45">Event ID</span>
+                  <span className="text-foreground/45">{isDuel ? 'Duel ID' : 'Event ID'}</span>
                   <span className="font-semibold text-foreground font-mono">#{pool.pool_id}</span>
                 </div>
                 <div className="flex justify-between text-xs">
@@ -2941,7 +2964,7 @@ export default function PoolDetailDrawer() {
               <p className="mb-3">Please review the details below before signing the transaction in your wallet:</p>
               <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-2.5 mb-4">
                 <div className="flex justify-between text-xs">
-                  <span className="text-foreground/45">Event ID</span>
+                  <span className="text-foreground/45">{isDuel ? 'Duel ID' : 'Event ID'}</span>
                   <span className="font-semibold text-foreground font-mono">#{pool.pool_id}</span>
                 </div>
                 <div className="flex justify-between text-xs">
@@ -2961,7 +2984,7 @@ export default function PoolDetailDrawer() {
               <p className="mb-3">Please review the details below before signing the transaction in your wallet:</p>
               <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-2.5 mb-4">
                 <div className="flex justify-between text-xs">
-                  <span className="text-foreground/45">Event ID</span>
+                  <span className="text-foreground/45">{isDuel ? 'Duel ID' : 'Event ID'}</span>
                   <span className="font-semibold text-foreground font-mono">#{pool.pool_id}</span>
                 </div>
                 <div className="flex justify-between text-xs">
@@ -2981,7 +3004,7 @@ export default function PoolDetailDrawer() {
               <p className="mb-3">Please review the details below before signing the transaction in your wallet:</p>
               <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-2.5 mb-4">
                 <div className="flex justify-between text-xs">
-                  <span className="text-foreground/45">Event ID</span>
+                  <span className="text-foreground/45">{isDuel ? 'Duel ID' : 'Event ID'}</span>
                   <span className="font-semibold text-foreground font-mono">#{pool.pool_id}</span>
                 </div>
                 <div className="flex justify-between text-xs">
@@ -3000,7 +3023,7 @@ export default function PoolDetailDrawer() {
               <p className="mb-3">Please review the details below before signing the transaction in your wallet:</p>
               <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-2.5 mb-4">
                 <div className="flex justify-between text-xs">
-                  <span className="text-foreground/45">Event ID</span>
+                  <span className="text-foreground/45">{isDuel ? 'Duel ID' : 'Event ID'}</span>
                   <span className="font-semibold text-foreground font-mono">#{pool.pool_id}</span>
                 </div>
                 <div className="flex justify-between text-xs">
@@ -3031,7 +3054,7 @@ export default function PoolDetailDrawer() {
               <p className="mb-3">Please review the details below before signing the transaction in your wallet:</p>
               <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-2.5 mb-4">
                 <div className="flex justify-between text-xs">
-                  <span className="text-foreground/45">Event ID</span>
+                  <span className="text-foreground/45">{isDuel ? 'Duel ID' : 'Event ID'}</span>
                   <span className="font-semibold text-foreground font-mono">#{pool.pool_id}</span>
                 </div>
                 <div className="flex justify-between text-xs">
@@ -3051,7 +3074,7 @@ export default function PoolDetailDrawer() {
               <p className="mb-3">Please review the details below before signing the transaction in your wallet:</p>
               <div className="bg-charcoal-dark border border-charcoal-light/35 rounded-xl p-3.5 space-y-2.5 mb-4">
                 <div className="flex justify-between text-xs">
-                  <span className="text-foreground/45">Event ID</span>
+                  <span className="text-foreground/45">{isDuel ? 'Duel ID' : 'Event ID'}</span>
                   <span className="font-semibold text-foreground font-mono">#{pool.pool_id}</span>
                 </div>
                 <div className="flex justify-between text-xs">

@@ -89,8 +89,8 @@ export default function DuelCard({ pool, isActive = true, onClick }: DuelCardPro
         <span
           className="text-xs font-semibold tracking-widest uppercase"
           style={{
-            color: theme === 'dark' ? '#C9A227' : '#B23A6E',
-            textShadow: theme === 'dark' ? '0 0 8px rgba(201, 162, 39, 0.3)' : '0 0 8px rgba(178, 58, 110, 0.2)',
+            color: theme === 'dark' ? '#9FFF3C' : '#478A00',
+            textShadow: theme === 'dark' ? '0 0 8px rgba(159, 255, 60, 0.4)' : '0 0 8px rgba(71, 138, 0, 0.25)',
           }}
         >
           Duel #{pool.pool_id}

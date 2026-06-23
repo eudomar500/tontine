@@ -88,10 +88,10 @@ export default function PoolExplorer() {
     }
   }, [viewMode, connectedAddress, loadMyPools]);
 
-  // Reset active index when category changes to start from the first card
+  // Reset active index when category or explorer tab changes to start from the first card
   useEffect(() => {
     setActiveIndex(0);
-  }, [selectedCategory]);
+  }, [selectedCategory, explorerTab]);
 
   // Adjust translations dynamically based on mobile viewports to prevent overflow
   useEffect(() => {
@@ -493,7 +493,7 @@ export default function PoolExplorer() {
             </button>
           )}
         </div>
-      ) : explorerTab === 'events' ? (
+      ) : (
         <>
           {/* 3D Carousel Stage */}
           <div 
@@ -522,7 +522,19 @@ export default function PoolExplorer() {
                     }
                   }}
                 >
-                  <PoolCard pool={pool} isActive={isActive} />
+                  {explorerTab === 'events' ? (
+                    <PoolCard pool={pool} isActive={isActive} />
+                  ) : (
+                    <DuelCard
+                      pool={pool}
+                      isActive={isActive}
+                      onClick={() => {
+                        if (isActive) {
+                          setSelectedPoolId(pool.pool_id);
+                        }
+                      }}
+                    />
+                  )}
                 </div>
               );
             })}
@@ -534,7 +546,7 @@ export default function PoolExplorer() {
               <button
                 onClick={handlePrev}
                 className="p-3 bg-charcoal-medium hover:bg-charcoal-light border border-charcoal-light/30 rounded-full text-foreground/75 hover:text-foreground transition-all shadow-md cursor-pointer"
-                title="Previous prediction event"
+                title={explorerTab === 'events' ? "Previous prediction event" : "Previous duel"}
               >
                 <ChevronLeft className="w-5 h-5" />
               </button>
@@ -546,25 +558,13 @@ export default function PoolExplorer() {
               <button
                 onClick={handleNext}
                 className="p-3 bg-charcoal-medium hover:bg-charcoal-light border border-charcoal-light/30 rounded-full text-foreground/75 hover:text-foreground transition-all shadow-md cursor-pointer"
-                title="Next prediction event"
+                title={explorerTab === 'events' ? "Next prediction event" : "Next duel"}
               >
                 <ChevronRight className="w-5 h-5" />
               </button>
             </div>
           )}
         </>
-      ) : (
-        /* Grid Layout for 1v1 Duels */
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 w-full max-w-6xl px-6">
-          {activePools.map((pool) => (
-            <DuelCard
-              key={pool.pool_id}
-              pool={pool}
-              isActive={true}
-              onClick={() => setSelectedPoolId(pool.pool_id)}
-            />
-          ))}
-        </div>
       )}
 
       {/* Sliding side drawer panel */}
