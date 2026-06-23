@@ -195,6 +195,7 @@ def create_pool(contract, vm, creator, value=None, **overrides):
         args.get("category", ""),
         args.get("name", ""),
         args.get("is_open_duel", False),
+        args.get("is_open", False),
     )
     return int(pid)
 

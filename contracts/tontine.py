@@ -85,6 +85,11 @@ class Pool:
     # take_open_slot. Pure access-control signal; no economic effect.
     is_open_duel: bool
 
+    # On-chain marker that any wallet may join directly via join_open_pool while
+    # OPEN, no whitelist approval needed. Pure access-control signal; no economic
+    # effect.
+    is_open: bool
+
 
 @allow_storage
 @dataclass
@@ -112,6 +117,7 @@ class PoolSummary:
     category: str
     name: str
     is_open_duel: bool
+    is_open: bool
 
 
 @dataclass
@@ -179,8 +185,8 @@ ADMIN_TRANSFER_WINDOW = u256(604800)
 # Identifies which deployed build is live. The contract is immutable after
 # deployment on Bradbury, so there is no in-place upgrade; each redeploy bumps
 # this and get_contract_info surfaces it on-chain. The original 0x2F83 build
-# carried no version, this redeploy is version 3.
-CONTRACT_VERSION = u256(3)
+# carried no version, this redeploy is version 4.
+CONTRACT_VERSION = u256(4)
 
 CONFIDENCE_THRESHOLD = 70
 NO_INDEX = u8(255)
@@ -322,6 +328,7 @@ class Tontine(gl.Contract):
         category: str = "",
         name: str = "",
         is_open_duel: bool = False,
+        is_open: bool = False,
     ) -> u256:
         # The killswitch always sets paused, so the pause guard already blocks
         # creation while it is active; a separate killswitch guard would be dead.
@@ -355,11 +362,17 @@ class Tontine(gl.Contract):
                 if resolution_sources[j] == src:
                     raise gl.vm.UserError("duplicate source URL")
 
+        # A pool is either an N-outcome open pool or a two-side duel, never both,
+        # so there is exactly one intended join path per pool type.
+        if is_open and is_open_duel:
+            raise gl.vm.UserError("conflicting pool type")
+
         n_wl = len(whitelist)
-        # Open duels are created with only the creator listed; the challenger
-        # side is filled later by take_open_slot, so a single-entry whitelist is
-        # valid for them. Normal pools keep the two-party floor.
-        min_wl = 1 if is_open_duel else MIN_WHITELIST
+        # Open duels and open pools are created with only the creator listed; the
+        # other participants join later (take_open_slot, join_open_pool), so a
+        # single-entry whitelist is valid for them. Normal pools keep the
+        # two-party floor.
+        min_wl = 1 if (is_open_duel or is_open) else MIN_WHITELIST
         if n_wl < min_wl or n_wl > MAX_WHITELIST:
             raise gl.vm.UserError("whitelist size out of range")
         zero = Address(b"\x00" * 20)
@@ -449,6 +462,7 @@ class Tontine(gl.Contract):
             category=category,
             name=name,
             is_open_duel=is_open_duel,
+            is_open=is_open,
         )
         self.pools_by_id[pool_id] = pool
 
@@ -547,6 +561,43 @@ class Tontine(gl.Contract):
         # Auto-inclusion: the taker is not whitelisted yet, so register their
         # membership here, then record the stake exactly as join_pool does.
         self._add_to_whitelist(pool, sender)
+        pool.outcomes[idx].total_staked = pool.outcomes[idx].total_staked + value
+        pool.outcomes[idx].participants_count = pool.outcomes[idx].participants_count + u256(1)
+        pool.total_pool = pool.total_pool + value
+
+        self.stakes[key] = Stake(sender, outcome_index, value, False)
+        self._index_stake_for_wallet(sender, pool_id)
+
+    @gl.public.write.payable
+    def join_open_pool(self, pool_id: u256, outcome_index: u8):
+        self._require_not_paused()
+        self._require_no_killswitch()
+        pool = self._get_pool(pool_id)
+        # Replaces join_pool's whitelist gate: anyone may join an open pool, and
+        # they are whitelisted as they stake. Many joiners per outcome, like a
+        # normal pool, so there is no duel occupancy check here.
+        if not pool.is_open:
+            raise gl.vm.UserError("pool not open to all")
+        if pool.state != PoolState.OPEN:
+            raise gl.vm.UserError("pool not open")
+        if _now() >= pool.join_deadline:
+            raise gl.vm.UserError("join deadline passed")
+        if outcome_index >= u8(len(pool.outcomes)):
+            raise gl.vm.UserError("invalid outcome")
+        value = gl.message.value
+        if value < MIN_STAKE:
+            raise gl.vm.UserError("stake below minimum")
+        sender = gl.message.sender_address
+        key = _stake_key(pool_id, sender)
+        if self.stakes.get(key, None) is not None:
+            raise gl.vm.UserError("already participating")
+
+        # Auto-inclusion: enforces no-duplicate and the MAX_WHITELIST cap, so the
+        # 101st participant reverts "whitelist full". That cap is the participant
+        # cap by design.
+        self._add_to_whitelist(pool, sender)
+
+        idx = int(outcome_index)
         pool.outcomes[idx].total_staked = pool.outcomes[idx].total_staked + value
         pool.outcomes[idx].participants_count = pool.outcomes[idx].participants_count + u256(1)
         pool.total_pool = pool.total_pool + value
@@ -942,6 +993,7 @@ class Tontine(gl.Contract):
             category=pool.category,
             name=pool.name,
             is_open_duel=pool.is_open_duel,
+            is_open=pool.is_open,
         )
 
     @gl.public.view
