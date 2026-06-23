@@ -81,6 +81,10 @@ class Pool:
     # effect. Empty is valid and renders without the prefix.
     name: str
 
+    # On-chain marker that the challenger side may be filled after creation by
+    # take_open_slot. Pure access-control signal; no economic effect.
+    is_open_duel: bool
+
 
 @allow_storage
 @dataclass
@@ -107,6 +111,7 @@ class PoolSummary:
     participant_count: u256
     category: str
     name: str
+    is_open_duel: bool
 
 
 @dataclass
@@ -174,8 +179,8 @@ ADMIN_TRANSFER_WINDOW = u256(604800)
 # Identifies which deployed build is live. The contract is immutable after
 # deployment on Bradbury, so there is no in-place upgrade; each redeploy bumps
 # this and get_contract_info surfaces it on-chain. The original 0x2F83 build
-# carried no version, this redeploy is version 2.
-CONTRACT_VERSION = u256(2)
+# carried no version, this redeploy is version 3.
+CONTRACT_VERSION = u256(3)
 
 CONFIDENCE_THRESHOLD = 70
 NO_INDEX = u8(255)
@@ -282,6 +287,16 @@ class Tontine(gl.Contract):
                 return True
         return False
 
+    def _add_to_whitelist(self, pool: Pool, wallet: Address):
+        # Append only, never remove. Reject duplicates and hold the cap, since
+        # the whitelist is scanned linearly in join_pool and request_resolution;
+        # growth is access-control only and must stay bounded to avoid a gas DoS.
+        if self._in_whitelist(pool, wallet):
+            raise gl.vm.UserError("already in whitelist")
+        if len(pool.whitelist) >= MAX_WHITELIST:
+            raise gl.vm.UserError("whitelist full")
+        pool.whitelist.append(wallet)
+
     def _index_stake_for_wallet(self, wallet: Address, pool_id: u256):
         lst = self.stakes_by_wallet.get(wallet, None)
         if lst is None:
@@ -306,6 +321,7 @@ class Tontine(gl.Contract):
         creator_outcome_index: u8,
         category: str = "",
         name: str = "",
+        is_open_duel: bool = False,
     ) -> u256:
         # The killswitch always sets paused, so the pause guard already blocks
         # creation while it is active; a separate killswitch guard would be dead.
@@ -340,7 +356,11 @@ class Tontine(gl.Contract):
                     raise gl.vm.UserError("duplicate source URL")
 
         n_wl = len(whitelist)
-        if n_wl < MIN_WHITELIST or n_wl > MAX_WHITELIST:
+        # Open duels are created with only the creator listed; the challenger
+        # side is filled later by take_open_slot, so a single-entry whitelist is
+        # valid for them. Normal pools keep the two-party floor.
+        min_wl = 1 if is_open_duel else MIN_WHITELIST
+        if n_wl < min_wl or n_wl > MAX_WHITELIST:
             raise gl.vm.UserError("whitelist size out of range")
         zero = Address(b"\x00" * 20)
         creator_present = False
@@ -428,6 +448,7 @@ class Tontine(gl.Contract):
             refund_reason=RefundReason.NONE,
             category=category,
             name=name,
+            is_open_duel=is_open_duel,
         )
         self.pools_by_id[pool_id] = pool
 
@@ -496,6 +517,43 @@ class Tontine(gl.Contract):
         pool.outcomes[idx].total_staked = pool.outcomes[idx].total_staked + value
         pool.total_pool = pool.total_pool + value
 
+    @gl.public.write.payable
+    def take_open_slot(self, pool_id: u256, outcome_index: u8):
+        self._require_not_paused()
+        self._require_no_killswitch()
+        pool = self._get_pool(pool_id)
+        if not pool.is_open_duel:
+            raise gl.vm.UserError("not an open duel")
+        if pool.state != PoolState.OPEN:
+            raise gl.vm.UserError("pool not open")
+        if _now() >= pool.join_deadline:
+            raise gl.vm.UserError("join deadline passed")
+        if outcome_index >= u8(len(pool.outcomes)):
+            raise gl.vm.UserError("invalid outcome")
+        value = gl.message.value
+        if value < MIN_STAKE:
+            raise gl.vm.UserError("stake below minimum")
+        sender = gl.message.sender_address
+        idx = int(outcome_index)
+        # The open side is the one nobody has staked yet. This is also the race
+        # guard: the first transaction to apply in a block flips occupancy
+        # non-zero, so a second taker for the same side reverts here.
+        if pool.outcomes[idx].total_staked != u256(0):
+            raise gl.vm.UserError("slot already taken")
+        key = _stake_key(pool_id, sender)
+        if self.stakes.get(key, None) is not None:
+            raise gl.vm.UserError("already participating")
+
+        # Auto-inclusion: the taker is not whitelisted yet, so register their
+        # membership here, then record the stake exactly as join_pool does.
+        self._add_to_whitelist(pool, sender)
+        pool.outcomes[idx].total_staked = pool.outcomes[idx].total_staked + value
+        pool.outcomes[idx].participants_count = pool.outcomes[idx].participants_count + u256(1)
+        pool.total_pool = pool.total_pool + value
+
+        self.stakes[key] = Stake(sender, outcome_index, value, False)
+        self._index_stake_for_wallet(sender, pool_id)
+
     @gl.public.write
     def cancel_pool(self, pool_id: u256):
         pool = self._get_pool(pool_id)
@@ -512,6 +570,20 @@ class Tontine(gl.Contract):
             raise gl.vm.UserError("cannot cancel: others joined")
         pool.state = PoolState.REFUNDED
         pool.refund_reason = RefundReason.CANCELLED
+
+    @gl.public.write
+    def add_to_whitelist(self, pool_id: u256, wallet: Address):
+        pool = self._get_pool(pool_id)
+        # Creator scoped, not admin. Only the pool creator approves entrants.
+        if gl.message.sender_address != pool.creator:
+            raise gl.vm.UserError("only creator")
+        # Open only. Adding during RESOLVING would expand who can call
+        # request_resolution mid-flight; after settle or refund it is pointless.
+        if pool.state != PoolState.OPEN:
+            raise gl.vm.UserError("pool not open")
+        if _now() >= pool.join_deadline:
+            raise gl.vm.UserError("join deadline passed")
+        self._add_to_whitelist(pool, wallet)
 
     @gl.public.write
     def request_resolution(self, pool_id: u256):
@@ -869,6 +941,7 @@ class Tontine(gl.Contract):
             participant_count=participants,
             category=pool.category,
             name=pool.name,
+            is_open_duel=pool.is_open_duel,
         )
 
     @gl.public.view
