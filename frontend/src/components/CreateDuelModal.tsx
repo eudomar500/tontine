@@ -51,6 +51,7 @@ export default function CreateDuelModal({ isOpen, onClose }: CreateDuelModalProp
   const [opponentOutcomeLabel, setOpponentOutcomeLabel] = useState<string>('');
   const [creatorStake, setCreatorStake] = useState<string>('');
   const [sources, setSources] = useState<string[]>(['', '']);
+  const [isOpenDuel, setIsOpenDuel] = useState<boolean>(false);
 
   // Offsets set to 24h as standard baseline defaults
   const [joinOffsetType] = useState<string>('24h');
@@ -102,6 +103,7 @@ export default function CreateDuelModal({ isOpen, onClose }: CreateDuelModalProp
     setOpponentOutcomeLabel('');
     setCreatorStake('');
     setSources(['', '']);
+    setIsOpenDuel(false);
     setValidationError(null);
     setIsConfirmOpen(false);
     resetWrite();
@@ -141,20 +143,22 @@ export default function CreateDuelModal({ isOpen, onClose }: CreateDuelModalProp
       return false;
     }
     
-    // Validate Opponent Wallet Address
-    const addressRegex = /^0x[a-fA-F0-9]{40}$/;
-    const oppClean = opponentAddress.trim();
-    if (!oppClean) {
-      setValidationError('Opponent wallet address is required');
-      return false;
-    }
-    if (!addressRegex.test(oppClean)) {
-      setValidationError('Opponent address is not a valid hex address');
-      return false;
-    }
-    if (oppClean.toLowerCase() === connectedAddress.toLowerCase()) {
-      setValidationError('You cannot challenge your own connected address');
-      return false;
+    // Validate Opponent Wallet Address (only for directed duels)
+    if (!isOpenDuel) {
+      const addressRegex = /^0x[a-fA-F0-9]{40}$/;
+      const oppClean = opponentAddress.trim();
+      if (!oppClean) {
+        setValidationError('Opponent wallet address is required');
+        return false;
+      }
+      if (!addressRegex.test(oppClean)) {
+        setValidationError('Opponent address is not a valid hex address');
+        return false;
+      }
+      if (oppClean.toLowerCase() === connectedAddress.toLowerCase()) {
+        setValidationError('You cannot challenge your own connected address');
+        return false;
+      }
     }
 
     // Validate Head-to-Head Outcomes
@@ -225,7 +229,7 @@ export default function CreateDuelModal({ isOpen, onClose }: CreateDuelModalProp
 
     // Map outcomes and whitelist to enforce 1v1 duel structure
     const displayOutcomes = [yourOutcomeLabel.trim(), opponentOutcomeLabel.trim()];
-    const whitelist = [challenger, opponentAddress.trim()];
+    const whitelist = isOpenDuel ? [challenger] : [challenger, opponentAddress.trim()];
     const whitelistAsCalldataAddresses = whitelist.map((addr) => new CalldataAddress(hexToBytes(addr)));
 
     const creatorStakeWei = genToWei(creatorStake);
@@ -251,6 +255,7 @@ export default function CreateDuelModal({ isOpen, onClose }: CreateDuelModalProp
           0, // creator_outcome_index is fixed to 0 (Your Outcome)
           'Duel', // category is set to 'Duel' to group them cleanly
           'duel:' + duelTitle.trim(), // prefix name to identify it as a Duel
+          isOpenDuel, // open/directed duel flag
         ],
         value: totalValueWei,
         trackAction: 'create_pool',
@@ -520,6 +525,25 @@ export default function CreateDuelModal({ isOpen, onClose }: CreateDuelModalProp
                       />
                     </div>
 
+                    <div className="flex items-center gap-2 px-4 py-3 bg-charcoal-dark/40 border border-charcoal-light/10 rounded-xl mb-4">
+                      <input
+                        type="checkbox"
+                        id="isOpenDuel"
+                        checked={isOpenDuel}
+                        onChange={(e) => {
+                          setIsOpenDuel(e.target.checked);
+                          if (e.target.checked) {
+                            setOpponentAddress('');
+                          }
+                          setValidationError(null);
+                        }}
+                        className="rounded border-charcoal-light bg-charcoal-dark text-brand-magenta focus:ring-brand-magenta focus:ring-opacity-25 cursor-pointer"
+                      />
+                      <label htmlFor="isOpenDuel" className="text-xs font-semibold text-foreground/80 cursor-pointer select-none">
+                        Open duel: let any wallet challenge
+                      </label>
+                    </div>
+
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       {/* Left Side: Creator */}
                       <div className="p-4 bg-charcoal-dark/40 border border-charcoal-light/10 rounded-2xl space-y-4">
@@ -557,13 +581,14 @@ export default function CreateDuelModal({ isOpen, onClose }: CreateDuelModalProp
                           </label>
                           <input
                             type="text"
-                            placeholder="0x..."
-                            value={opponentAddress}
+                            placeholder={isOpenDuel ? 'Any wallet can challenge' : '0x...'}
+                            disabled={isOpenDuel}
+                            value={isOpenDuel ? '' : opponentAddress}
                             onChange={(e) => {
                               setOpponentAddress(e.target.value);
                               setValidationError(null);
                             }}
-                            className="w-full px-3 py-2 bg-charcoal-dark border border-charcoal-light/20 focus:border-foreground/15 rounded-xl text-xs text-foreground focus:outline-none placeholder-foreground/20"
+                            className={`w-full px-3 py-2 bg-charcoal-dark border rounded-xl text-xs text-foreground focus:outline-none placeholder-foreground/20 ${isOpenDuel ? 'border-charcoal-light/10 opacity-50 cursor-not-allowed text-foreground/40' : 'border-charcoal-light/20 focus:border-foreground/15 text-foreground'}`}
                           />
                         </div>
                         <div className="space-y-1.5">
@@ -691,7 +716,9 @@ export default function CreateDuelModal({ isOpen, onClose }: CreateDuelModalProp
             </div>
             <div className="flex justify-between text-xs">
               <span className="text-foreground/45">Opponent Wallet</span>
-              <span className="font-semibold text-brand-magenta font-mono">{opponentAddress.slice(0, 6)}...{opponentAddress.slice(-4)}</span>
+              <span className="font-semibold text-brand-magenta font-mono">
+                {isOpenDuel ? 'Open (Any Wallet)' : `${opponentAddress.slice(0, 6)}...${opponentAddress.slice(-4)}`}
+              </span>
             </div>
             <div className="flex justify-between text-xs">
               <span className="text-foreground/45">Initial Stake</span>
@@ -699,7 +726,9 @@ export default function CreateDuelModal({ isOpen, onClose }: CreateDuelModalProp
             </div>
           </div>
           <p className="text-xs text-foreground/75 leading-relaxed font-light">
-            Once submitted, your initial stake and the creation fee are sent to the contract. The challenged player is whitelisted for the opponent outcome.
+            {isOpenDuel
+              ? 'Once submitted, your initial stake and the creation fee are sent to the contract. Any wallet can challenge you by staking on the opponent outcome.'
+              : 'Once submitted, your initial stake and the creation fee are sent to the contract. The challenged player is whitelisted for the opponent outcome.'}
           </p>
         </div>
       </ConfirmModal>
