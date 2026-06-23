@@ -523,11 +523,12 @@ export default function PoolExplorer() {
                   }}
                 >
                   {explorerTab === 'events' ? (
-                    <PoolCard pool={pool} isActive={isActive} />
+                    <PoolCard pool={pool} isActive={isActive} displayIndex={idx + 1} />
                   ) : (
                     <DuelCard
                       pool={pool}
                       isActive={isActive}
+                      displayIndex={idx + 1}
                       onClick={() => {
                         if (isActive) {
                           setSelectedPoolId(pool.pool_id);

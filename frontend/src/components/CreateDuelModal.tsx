@@ -5,7 +5,7 @@ import { X, Plus, Trash2, Loader2, AlertCircle, CheckCircle2, ExternalLink, Help
 import { useWalletStore } from '../store/wallet';
 import { useTrackedContractWrite } from '../hooks/useTrackedContractWrite';
 import ConfirmModal from './ConfirmModal';
-import { getCreationFee, hexToBytes, CONTRACT_ADDRESS, weiToGen, getPoolCount } from '../services/contract';
+import { getCreationFee, hexToBytes, CONTRACT_ADDRESS, weiToGen, getPoolCount, CATEGORIES } from '../services/contract';
 import { CalldataAddress } from 'genlayer-js/types';
 import { usePoolsStore } from '../store/pools';
 
@@ -52,6 +52,7 @@ export default function CreateDuelModal({ isOpen, onClose }: CreateDuelModalProp
   const [creatorStake, setCreatorStake] = useState<string>('');
   const [sources, setSources] = useState<string[]>(['', '']);
   const [isOpenDuel, setIsOpenDuel] = useState<boolean>(false);
+  const [category, setCategory] = useState<string>('');
 
   // Offsets set to 24h as standard baseline defaults
   const [joinOffsetType] = useState<string>('24h');
@@ -104,6 +105,7 @@ export default function CreateDuelModal({ isOpen, onClose }: CreateDuelModalProp
     setCreatorStake('');
     setSources(['', '']);
     setIsOpenDuel(false);
+    setCategory('');
     setValidationError(null);
     setIsConfirmOpen(false);
     resetWrite();
@@ -252,11 +254,11 @@ export default function CreateDuelModal({ isOpen, onClose }: CreateDuelModalProp
           whitelistAsCalldataAddresses,
           BigInt(joinOffset),
           BigInt(resolutionOffset),
-          0, // creator_outcome_index is fixed to 0 (Your Outcome)
-          'Duel', // category is set to 'Duel' to group them cleanly
-          'duel:' + duelTitle.trim(), // prefix name to identify it as a Duel
-          isOpenDuel, // open/directed duel flag
-          false, // duel is not an open pool
+          0,
+          (category || 'Other').trim(),
+          'duel:' + duelTitle.trim(),
+          isOpenDuel,
+          false,
         ],
         value: totalValueWei,
         trackAction: 'create_pool',
@@ -524,6 +526,29 @@ export default function CreateDuelModal({ isOpen, onClose }: CreateDuelModalProp
                         }}
                         className="w-full px-3.5 py-2.5 bg-charcoal-dark border border-charcoal-light focus:border-foreground/15 rounded-xl text-xs text-foreground focus:outline-none transition-colors placeholder-foreground/20 font-semibold"
                       />
+                    </div>
+
+                    {/* Category Selection select dropdown */}
+                    <div className="space-y-2">
+                      <label className="text-[10px] uppercase font-bold tracking-widest text-foreground/45 block">
+                        Category (Optional)
+                      </label>
+                      <select
+                        value={category}
+                        onChange={(e) => {
+                          setCategory(e.target.value);
+                          setValidationError(null);
+                        }}
+                        className="w-full px-3.5 py-2.5 bg-charcoal-dark border border-charcoal-light focus:border-foreground/15 rounded-xl text-xs text-foreground focus:outline-none transition-colors cursor-pointer"
+                      >
+                        <option value="" className="text-foreground/30 bg-charcoal-medium">Select a category...</option>
+                        {CATEGORIES.map((cat) => (
+                          <option key={cat} value={cat} className="text-foreground bg-charcoal-medium">
+                            {cat}
+                          </option>
+                        ))}
+                        <option value="Other" className="text-foreground bg-charcoal-medium">Other</option>
+                      </select>
                     </div>
 
                     <div className="flex items-center gap-2 px-4 py-3 bg-charcoal-dark/40 border border-charcoal-light/10 rounded-xl mb-4">

@@ -8,9 +8,10 @@ import { useThemeStore } from '../store/theme';
 interface PoolCardProps {
   pool: PoolSummary;
   isActive?: boolean;
+  displayIndex: number;
 }
 
-export default function PoolCard({ pool, isActive = true }: PoolCardProps) {
+export default function PoolCard({ pool, isActive = true, displayIndex }: PoolCardProps) {
   const theme = useThemeStore((state) => state.theme);
   const totals = pool.outcome_totals.map((t) => BigInt(t));
   const totalStake = totals.reduce((a, b) => a + b, 0n);
@@ -78,7 +79,7 @@ export default function PoolCard({ pool, isActive = true }: PoolCardProps) {
                 textShadow: theme === 'dark' ? '0 0 8px rgba(159, 255, 60, 0.4)' : '0 0 8px rgba(71, 138, 0, 0.25)',
               }}
             >
-              Event #{pool.pool_id}
+              Event #{displayIndex}
             </span>
             {pool.category && pool.category.trim() !== '' && (
               <span className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-charcoal-light/30 text-foreground/60 border border-charcoal-light/20 uppercase tracking-wider">

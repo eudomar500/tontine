@@ -14,7 +14,7 @@ import {
   AlertCircle,
   HelpCircle,
 } from 'lucide-react';
-import { usePoolsStore } from '../store/pools';
+import { usePoolsStore, selectFilteredPools } from '../store/pools';
 import { useWalletStore } from '../store/wallet';
 import { useTrackedContractWrite } from '../hooks/useTrackedContractWrite';
 import { usePendingWritesStore } from '../store/pendingWrites';
@@ -82,6 +82,8 @@ export default function PoolDetailDrawer() {
   const [localMarker, setLocalMarker] = useState<{ txHash: string; timestamp: number } | null>(null);
   const pools = usePoolsStore((state) => state.pools);
   const selectedPoolSummary = selectedPoolId !== null ? pools.find((p) => p.pool_id === selectedPoolId) : undefined;
+  const myPoolIds = usePoolsStore((state) => state.myPoolIds);
+  const activeCategoryPools = usePoolsStore(selectFilteredPools);
 
   // Resolve duel status synchronously from cached summary, fallback to loaded pool details,
   // or return null if neither is available during initial cache-miss loading.
@@ -92,6 +94,36 @@ export default function PoolDetailDrawer() {
       : null;
 
   const isDuel = isDuelResolved === true;
+
+  // Derive the display index synchronously from the current list state.
+  // Calculate displayIndex by searching the filtered store list (or fallback to the unfiltered list).
+  const getDisplayIndex = () => {
+    if (selectedPoolId === null) return null;
+    const targetList = isDuel
+      ? activeCategoryPools.filter((p) => p.name && p.name.trim().toLowerCase().startsWith('duel:'))
+      : activeCategoryPools.filter((p) => !p.name || !p.name.trim().toLowerCase().startsWith('duel:'));
+
+    const idx = targetList.findIndex((p) => p.pool_id === selectedPoolId);
+    if (idx !== -1) return idx + 1;
+
+    const fallbackList = isDuel
+      ? pools.filter((p) => p.name && p.name.trim().toLowerCase().startsWith('duel:'))
+      : pools.filter((p) => !p.name || !p.name.trim().toLowerCase().startsWith('duel:'));
+
+    const fallbackIdx = fallbackList.findIndex((p) => p.pool_id === selectedPoolId);
+    if (fallbackIdx !== -1) return fallbackIdx + 1;
+
+    return null;
+  };
+
+  const displayIndex = getDisplayIndex();
+
+  const renderHeaderIndex = () => {
+    if (displayIndex === null) {
+      return <span className="inline-block w-6 h-3.5 bg-charcoal-light/25 rounded animate-pulse align-middle" />;
+    }
+    return `#${displayIndex}`;
+  };
 
   // Resolve header type label or render a temporary loading indicator during cache-miss loads.
   const renderHeaderLabel = () => {
@@ -988,7 +1020,20 @@ export default function PoolDetailDrawer() {
     isReconciled &&
     !isReconciling;
 
-  const hasJoined = userStake !== null;
+  // Resolve the joined state synchronously from the store cache if present.
+  // If not cached, or if specific stake details are required but still loading on-chain,
+  // return null to render a neutral loader rather than defaulting to the wrong state.
+  const hasJoinedResolved = selectedPoolId !== null && connectedAddress
+    ? myPoolIds.includes(selectedPoolId)
+      ? userStake !== null
+        ? true
+        : null
+      : isStakeChecked
+        ? userStake !== null
+        : null
+    : false;
+
+  const hasJoined = hasJoinedResolved === true;
 
   const isOpponentSideEmpty = creatorOutcomeIndex !== null && pool && 
     (BigInt(pool.outcomes[1 - creatorOutcomeIndex]?.total_staked || '0') === 0n);
@@ -1313,7 +1358,10 @@ export default function PoolDetailDrawer() {
           <div className="flex flex-col gap-1.5">
             <div className="flex items-center gap-2 animate-fade-in">
               <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase inline-flex items-center gap-1">
-                {renderHeaderLabel()} #{selectedPoolId}
+                {renderHeaderLabel()} {renderHeaderIndex()}
+              </span>
+              <span className="text-[10px] font-semibold text-foreground/30 font-mono">
+                (On-chain ID: {selectedPoolId})
               </span>
               {category && category.trim() !== '' && (
                 <span className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-charcoal-light/30 text-foreground/60 border border-charcoal-light/20 uppercase tracking-wider">
@@ -1775,6 +1823,12 @@ export default function PoolDetailDrawer() {
                     >
                       Connect Wallet
                     </button>
+                  </div>
+                ) : hasJoinedResolved === null ? (
+                  // Neutral loading placeholder for action area while stake resolves
+                  <div className="p-5 bg-charcoal-medium/10 border border-charcoal-light/15 rounded-2xl flex flex-col items-center text-center space-y-3 animate-pulse">
+                    <Loader2 className="w-5 h-5 text-brand-gold/60 animate-spin" />
+                    <span className="text-xs text-foreground/45 font-medium">Verifying stake details...</span>
                   </div>
                 ) : isKillswitchActive ? (
                   // Emergency Mode UI Panel
@@ -2424,7 +2478,7 @@ export default function PoolDetailDrawer() {
                         </span>
                         <div className="grid grid-cols-2 gap-2">
                           {pool.outcomes.map((outcome, idx) => {
-                            const isSelected = userStake.outcome_index === idx;
+                            const isSelected = userStake!.outcome_index === idx;
                             return (
                               <button
                                 key={idx}
@@ -2434,7 +2488,7 @@ export default function PoolDetailDrawer() {
                                   isSelected
                                     ? 'bg-brand-gold text-charcoal-dark border-brand-gold shadow-md'
                                     : 'bg-charcoal-dark/40 border-charcoal-light text-foreground/20'
-                                }`}
+                                  }`}
                               >
                                 {outcome.label}
                               </button>
@@ -2466,7 +2520,7 @@ export default function PoolDetailDrawer() {
                           </span>
                         </div>
                         <div className="flex justify-between items-center text-[10px] text-foreground/45">
-                          <span>Current stake: {weiToGen(userStake.amount)} GEN</span>
+                          <span>Current stake: {weiToGen(userStake!.amount)} GEN</span>
                           <span>Minimum: 0.01 GEN</span>
                         </div>
                       </div>
@@ -2507,8 +2561,8 @@ export default function PoolDetailDrawer() {
                 ) : pool.state === 2 ? (
                   // State 2: SETTLED
                   hasJoined ? (
-                    userStake.outcome_index === pool.winning_outcome_index ? (
-                      userStake.claimed ? (
+                    userStake!.outcome_index === pool.winning_outcome_index ? (
+                      userStake!.claimed ? (
                         // Claimed Badge
                         <div className="p-4 bg-foreground/5 border border-foreground/15 rounded-2xl flex items-center justify-center gap-2.5 text-xs text-foreground/80 font-semibold">
                           <CheckCircle2 className="w-4 h-4 text-brand-gold" />
@@ -2546,7 +2600,7 @@ export default function PoolDetailDrawer() {
                             </button>
                           </div>
                         </div>
-                      ) : (pendingClaimWinningsTx && !userStake.claimed) ? (
+                      ) : (pendingClaimWinningsTx && !userStake!.claimed) ? (
                         // Claim Pending (Processing State)
                         <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
                           <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
@@ -2641,7 +2695,7 @@ export default function PoolDetailDrawer() {
                     </div>
 
                     {hasJoined ? (
-                      userStake.claimed ? (
+                      userStake!.claimed ? (
                         <div className="p-4 bg-foreground/5 border border-foreground/15 rounded-2xl flex items-center justify-center gap-2.5 text-xs text-foreground/80 font-semibold">
                           <CheckCircle2 className="w-4 h-4 text-brand-gold" />
                           <span>Refund Claimed</span>
@@ -2678,7 +2732,7 @@ export default function PoolDetailDrawer() {
                             </button>
                           </div>
                         </div>
-                      ) : (pendingClaimRefundTx && !userStake.claimed) ? (
+                      ) : (pendingClaimRefundTx && !userStake!.claimed) ? (
                         <div className="space-y-4 bg-charcoal-medium/10 border border-charcoal-light/20 rounded-2xl p-4.5">
                           <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase block">
                             Claim Refund
@@ -2713,7 +2767,7 @@ export default function PoolDetailDrawer() {
                           </span>
                           <div className="space-y-1">
                             <span className="text-[10px] uppercase font-bold tracking-widest text-foreground/40 block">Refundable Amount</span>
-                            <span className="text-lg font-bold text-brand-gold block">{weiToGen(userStake.amount)} GEN</span>
+                            <span className="text-lg font-bold text-brand-gold block">{weiToGen(userStake!.amount)} GEN</span>
                           </div>
                           <button
                             type="button"

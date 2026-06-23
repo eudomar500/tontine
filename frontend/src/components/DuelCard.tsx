@@ -9,9 +9,10 @@ interface DuelCardProps {
   pool: PoolSummary;
   isActive?: boolean;
   onClick?: () => void;
+  displayIndex: number;
 }
 
-export default function DuelCard({ pool, isActive = true, onClick }: DuelCardProps) {
+export default function DuelCard({ pool, isActive = true, onClick, displayIndex }: DuelCardProps) {
   const theme = useThemeStore((state) => state.theme);
 
   // Strip prefix for clean title presentation
@@ -93,7 +94,7 @@ export default function DuelCard({ pool, isActive = true, onClick }: DuelCardPro
             textShadow: theme === 'dark' ? '0 0 8px rgba(159, 255, 60, 0.4)' : '0 0 8px rgba(71, 138, 0, 0.25)',
           }}
         >
-          Duel #{pool.pool_id}
+          Duel #{displayIndex}
         </span>
         <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full border ${getBadgeStyles(pool.state)}`}>
           {stateLabel(pool.state)}
