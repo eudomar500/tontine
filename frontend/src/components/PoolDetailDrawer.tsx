@@ -68,7 +68,7 @@ export default function PoolDetailDrawer() {
   const [creatorOutcomeIndex, setCreatorOutcomeIndex] = useState<number | null>(null);
   const [isStakeLoading, setIsStakeLoading] = useState<boolean>(false);
   const [isStakeChecked, setIsStakeChecked] = useState<boolean>(false);
-  const [activeAction, setActiveAction] = useState<'join' | 'increase' | 'resolve' | 'claim' | 'force_refund' | 'claim_refund' | 'cancel' | 'block_and_refund' | 'emergency_withdraw' | 'take_open_slot' | null>(null);
+  const [activeAction, setActiveAction] = useState<'join' | 'increase' | 'resolve' | 'claim' | 'force_refund' | 'claim_refund' | 'cancel' | 'block_and_refund' | 'emergency_withdraw' | 'take_open_slot' | 'join_open_pool' | null>(null);
 
   const [isReconciled, setIsReconciled] = useState<boolean>(false);
   const [isReconciling, setIsReconciling] = useState<boolean>(false);
@@ -1010,6 +1010,15 @@ export default function PoolDetailDrawer() {
     isUserNotParticipant
   );
 
+  const canJoinOpen = !!(
+    pool &&
+    pool.is_open &&
+    pool.state === 0 &&
+    isBeforeJoinDeadline &&
+    connectedAddress &&
+    !hasJoined
+  );
+
   // Estimate winnings payout: share = (stake * total_pool) / winning_pool
   const winningOutcome = pool && pool.winning_outcome_index !== 255 ? pool.outcomes[pool.winning_outcome_index] : null;
   let estimatedPayoutStr = '';
@@ -1070,7 +1079,7 @@ export default function PoolDetailDrawer() {
       return;
     }
     setValidationError(null);
-    setActiveAction(canTakeOpenSlot ? 'take_open_slot' : 'join');
+    setActiveAction(canTakeOpenSlot ? 'take_open_slot' : canJoinOpen ? 'join_open_pool' : 'join');
     setIsConfirmOpen(true);
   };
 
@@ -1132,7 +1141,7 @@ export default function PoolDetailDrawer() {
     setIsConfirmOpen(false);
 
     // Double-check NaN-guard on stake amount before submitting write transaction
-    if (activeAction === 'join' || activeAction === 'increase' || activeAction === 'take_open_slot') {
+    if (activeAction === 'join' || activeAction === 'increase' || activeAction === 'take_open_slot' || activeAction === 'join_open_pool') {
       const val = parseFloat(stakeAmount);
       if (isNaN(val) || val < 0.01) {
         setValidationError('Minimum stake amount is 0.01 GEN');
@@ -1199,6 +1208,21 @@ export default function PoolDetailDrawer() {
           await write({
             address: CONTRACT_ADDRESS,
             functionName: 'take_open_slot',
+            args: [BigInt(pool.pool_id), selectedOutcomeIndex],
+            value: genToWei(stakeAmount),
+            trackAction: 'join_pool',
+            trackTarget: String(pool.pool_id),
+          });
+        } finally {
+          setIsSubmittingJoin(false);
+        }
+      } else if (activeAction === 'join_open_pool') {
+        if (selectedOutcomeIndex === null) return;
+        setIsSubmittingJoin(true);
+        try {
+          await write({
+            address: CONTRACT_ADDRESS,
+            functionName: 'join_open_pool',
             args: [BigInt(pool.pool_id), selectedOutcomeIndex],
             value: genToWei(stakeAmount),
             trackAction: 'join_pool',
@@ -2018,7 +2042,7 @@ export default function PoolDetailDrawer() {
                         </div>
                       )}
                     </div>
-                  ) : (!isWhitelisted && !canTakeOpenSlot) ? (
+                  ) : (!isWhitelisted && !canTakeOpenSlot && !canJoinOpen) ? (
                     // Whitelist guard
                     <div className="p-4 bg-brand-magenta/5 border border-brand-magenta/15 rounded-2xl flex items-start gap-3 text-xs text-brand-magenta/80">
                       <AlertCircle className="w-4 h-4 text-brand-magenta/60 shrink-0 mt-0.5" />
@@ -2916,6 +2940,8 @@ export default function PoolDetailDrawer() {
               ? 'Confirm Emergency Withdrawal'
               : activeAction === 'take_open_slot'
               ? 'Confirm Take Open Slot'
+              : activeAction === 'join_open_pool'
+              ? 'Confirm Joining Open Pool'
               : 'Confirm Staking Action'
           }
         >

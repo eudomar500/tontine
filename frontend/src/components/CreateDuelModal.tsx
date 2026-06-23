@@ -256,6 +256,7 @@ export default function CreateDuelModal({ isOpen, onClose }: CreateDuelModalProp
           'Duel', // category is set to 'Duel' to group them cleanly
           'duel:' + duelTitle.trim(), // prefix name to identify it as a Duel
           isOpenDuel, // open/directed duel flag
+          false, // duel is not an open pool
         ],
         value: totalValueWei,
         trackAction: 'create_pool',

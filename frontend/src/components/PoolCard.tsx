@@ -85,6 +85,11 @@ export default function PoolCard({ pool, isActive = true }: PoolCardProps) {
                 {pool.category}
               </span>
             )}
+            {pool.is_open && (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-brand-gold/10 text-brand-gold border border-brand-gold/20 uppercase tracking-wider">
+                Open
+              </span>
+            )}
           </div>
           {pool.name && pool.name.trim() !== '' && (
             <span className="text-xs font-semibold text-foreground/60">
