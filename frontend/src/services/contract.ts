@@ -2,7 +2,7 @@ import { createClient } from 'genlayer-js';
 import { CalldataAddress } from 'genlayer-js/types';
 import { testnetBradbury } from 'genlayer-js/chains';
 import { rpcQueue, withRateLimitRetry } from './rpc';
-export const CONTRACT_ADDRESS = '0x57E9930079FCeF23A76468508643F4aF193776C8';
+export const CONTRACT_ADDRESS = '0x8116845930Cf90C29037D4972C2944eaF8a276bf';
 export const CATEGORIES = ['Crypto', 'Sports', 'Politics', 'Weather', 'Tech'] as const;
 const client = createClient({ chain: testnetBradbury });
 
@@ -22,6 +22,7 @@ export interface PoolSummary {
   category: string;
   name: string;
   is_open_duel: boolean;
+  is_open: boolean;
 }
 
 /**
@@ -175,6 +176,7 @@ export interface Pool {
   category: string;
   name: string;
   is_open_duel: boolean;
+  is_open: boolean;
 }
 
 /**
