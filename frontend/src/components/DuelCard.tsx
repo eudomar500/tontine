@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import Avatar from 'boring-avatars';
-import { PoolSummary, weiToGen, stateLabel, truncateAddress, timeRemaining, getPool, getStake } from '../services/contract';
+import { PoolSummary, weiToGen, stateLabel, truncateAddress, timeRemaining } from '../services/contract';
 import { useThemeStore } from '../store/theme';
 
 interface DuelCardProps {
@@ -13,36 +13,6 @@ interface DuelCardProps {
 
 export default function DuelCard({ pool, isActive = true, onClick }: DuelCardProps) {
   const theme = useThemeStore((state) => state.theme);
-  const [whitelist, setWhitelist] = useState<string[]>([]);
-  const [creatorOutcomeIndex, setCreatorOutcomeIndex] = useState<number | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
-
-  // Fetch the duel whitelist and challenger outcome index on mount
-  useEffect(() => {
-    let active = true;
-    async function loadDuelDetails() {
-      try {
-        const [poolDetail, creatorStake] = await Promise.all([
-          getPool(pool.pool_id),
-          getStake(pool.pool_id, pool.creator),
-        ]);
-        if (active) {
-          setWhitelist(poolDetail.whitelist);
-          setCreatorOutcomeIndex(creatorStake.outcome_index);
-        }
-      } catch (err) {
-        console.warn(`Failed to retrieve duel ${pool.pool_id} metadata:`, err);
-      } finally {
-        if (active) {
-          setLoading(false);
-        }
-      }
-    }
-    loadDuelDetails();
-    return () => {
-      active = false;
-    };
-  }, [pool.pool_id, pool.creator]);
 
   // Strip prefix for clean title presentation
   const duelTitle = pool.name.toLowerCase().startsWith('duel:')
@@ -80,44 +50,16 @@ export default function DuelCard({ pool, isActive = true, onClick }: DuelCardPro
     }
   };
 
-  if (loading) {
-    return (
-      <div className="w-full h-[380px] bg-charcoal-medium/40 dark:bg-charcoal-medium/20 border border-charcoal-light/30 rounded-2xl animate-pulse flex flex-col justify-between p-6">
-        <div className="flex justify-between items-center">
-          <div className="h-3 w-16 bg-charcoal-light/30 rounded" />
-          <div className="h-5 w-16 bg-charcoal-light/30 rounded-full" />
-        </div>
-        <div className="flex-1 flex items-center justify-between px-4 mt-6">
-          <div className="flex flex-col items-center space-y-2">
-            <div className="w-12 h-12 bg-charcoal-light/30 rounded-full" />
-            <div className="h-3 w-14 bg-charcoal-light/30 rounded" />
-          </div>
-          <div className="w-8 h-8 rounded-full bg-charcoal-light/20 flex items-center justify-center font-bold text-foreground/30 text-xs">
-            VS
-          </div>
-          <div className="flex flex-col items-center space-y-2">
-            <div className="w-12 h-12 bg-charcoal-light/30 rounded-full" />
-            <div className="h-3 w-14 bg-charcoal-light/30 rounded" />
-          </div>
-        </div>
-        <div className="space-y-2">
-          <div className="h-4 w-3/4 bg-charcoal-light/30 rounded" />
-          <div className="h-3 w-1/2 bg-charcoal-light/30 rounded" />
-        </div>
-        <div className="border-t border-charcoal-light/25 pt-4 mt-4 flex justify-between">
-          <div className="h-3 w-24 bg-charcoal-light/30 rounded" />
-          <div className="h-3 w-16 bg-charcoal-light/30 rounded" />
-        </div>
-      </div>
-    );
+  // Determine indices without contract read
+  const p1StakeAmt = BigInt(pool.outcome_totals[0] || '0');
+  const p2StakeAmt = BigInt(pool.outcome_totals[1] || '0');
+  let p1OutcomeIndex = 0;
+  if (p1StakeAmt === 0n && p2StakeAmt > 0n) {
+    p1OutcomeIndex = 1;
   }
-
-  // Resolve Player 1 and Player 2 indices and states
-  const p1Address = pool.creator;
-  const p2Address = whitelist.find((addr) => addr.toLowerCase() !== p1Address.toLowerCase()) || '';
-  const p1OutcomeIndex = creatorOutcomeIndex ?? 0;
   const p2OutcomeIndex = 1 - p1OutcomeIndex;
 
+  const p1Address = pool.creator;
   const p1OutcomeLabel = pool.outcome_labels[p1OutcomeIndex] || 'Outcome A';
   const p2OutcomeLabel = pool.outcome_labels[p2OutcomeIndex] || 'Outcome B';
 
@@ -130,7 +72,10 @@ export default function DuelCard({ pool, isActive = true, onClick }: DuelCardPro
   const p2Won = pool.state === 2 && pool.winning_outcome_index === p2OutcomeIndex;
 
   return (
-    <div className={`relative flex flex-col justify-between p-6 w-full min-h-[380px] bg-charcoal-medium/40 dark:bg-charcoal-medium/20 border border-charcoal-light/30 rounded-2xl shadow-xl transition-all duration-300 backdrop-blur-md overflow-hidden ${isActive ? 'cursor-pointer hover:border-charcoal-light/60 hover:shadow-brand-magenta/5' : 'cursor-default'}`}>
+    <div 
+      onClick={isActive ? onClick : undefined}
+      className={`relative flex flex-col justify-between p-6 w-full min-h-[380px] bg-charcoal-medium/40 dark:bg-charcoal-medium/20 border border-charcoal-light/30 rounded-2xl shadow-xl transition-all duration-300 backdrop-blur-md overflow-hidden ${isActive ? 'cursor-pointer hover:border-charcoal-light/60 hover:shadow-brand-magenta/5' : 'cursor-default'}`}
+    >
       <div 
         className="border-beam-container" 
         style={{
@@ -195,13 +140,13 @@ export default function DuelCard({ pool, isActive = true, onClick }: DuelCardPro
 
         {/* Right Side: Opponent */}
         <div className="flex-1 flex flex-col items-center text-center space-y-2 max-w-[45%]">
-          {p2Address ? (
+          {p2Joined ? (
             <>
               <div className="relative">
-                <div className={`flex items-center justify-center rounded-full overflow-hidden w-11 h-11 border-2 ${p2Won ? 'border-brand-gold animate-pulse' : 'border-charcoal-light/40'} ${!p2Joined ? 'opacity-40' : ''}`}>
+                <div className={`flex items-center justify-center rounded-full overflow-hidden w-11 h-11 border-2 ${p2Won ? 'border-brand-gold animate-pulse' : 'border-charcoal-light/40'}`}>
                   <Avatar
                     size={44}
-                    name={p2Address}
+                    name={pool.pool_id + '-opponent'}
                     variant="marble"
                     colors={['#c9a227', '#b23a6e', '#f1ece3', '#1f1f22', '#0b0b0c']}
                   />
@@ -213,14 +158,14 @@ export default function DuelCard({ pool, isActive = true, onClick }: DuelCardPro
                 )}
               </div>
               <span className="text-[10px] text-foreground/45 font-mono truncate w-24">
-                {truncateAddress(p2Address)}
+                Opponent
               </span>
               <div className="flex flex-col">
                 <span className="text-xs font-bold text-foreground truncate w-24" title={p2OutcomeLabel}>
                   {p2OutcomeLabel}
                 </span>
-                <span className={`text-[10px] font-semibold mt-0.5 ${p2Joined ? 'text-brand-gold' : 'text-foreground/30 font-light'}`}>
-                  {p2Joined ? `${weiToGen(p2Stake.toString())} GEN` : 'Awaiting Join'}
+                <span className="text-[10px] font-semibold mt-0.5 text-brand-gold">
+                  {weiToGen(p2Stake.toString())} GEN
                 </span>
               </div>
             </>
@@ -230,7 +175,7 @@ export default function DuelCard({ pool, isActive = true, onClick }: DuelCardPro
                 ?
               </div>
               <span className="text-[10px] text-foreground/30 font-light">
-                Awaiting Invite
+                {pool.is_open_duel ? 'Awaiting Challenger' : 'Awaiting Join'}
               </span>
             </div>
           )}

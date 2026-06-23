@@ -68,7 +68,7 @@ export default function PoolDetailDrawer() {
   const [creatorOutcomeIndex, setCreatorOutcomeIndex] = useState<number | null>(null);
   const [isStakeLoading, setIsStakeLoading] = useState<boolean>(false);
   const [isStakeChecked, setIsStakeChecked] = useState<boolean>(false);
-  const [activeAction, setActiveAction] = useState<'join' | 'increase' | 'resolve' | 'claim' | 'force_refund' | 'claim_refund' | 'cancel' | 'block_and_refund' | 'emergency_withdraw' | null>(null);
+  const [activeAction, setActiveAction] = useState<'join' | 'increase' | 'resolve' | 'claim' | 'force_refund' | 'claim_refund' | 'cancel' | 'block_and_refund' | 'emergency_withdraw' | 'take_open_slot' | null>(null);
 
   const [isReconciled, setIsReconciled] = useState<boolean>(false);
   const [isReconciling, setIsReconciling] = useState<boolean>(false);
@@ -80,7 +80,7 @@ export default function PoolDetailDrawer() {
   const [isClaimRefundReconciling, setIsClaimRefundReconciling] = useState<boolean>(false);
 
   const [localMarker, setLocalMarker] = useState<{ txHash: string; timestamp: number } | null>(null);
-  const isDuel = !!(pool && pool.name && pool.name.trim().toLowerCase().startsWith('duel:'));
+  const isDuel = !!(pool && (pool.is_open_duel || (pool.name && pool.name.trim().toLowerCase().startsWith('duel:'))));
 
   // Lock join outcome index to opponent's side for duels
   useEffect(() => {
@@ -967,6 +967,26 @@ export default function PoolDetailDrawer() {
 
   const hasJoined = userStake !== null;
 
+  const isOpponentSideEmpty = creatorOutcomeIndex !== null && pool && 
+    (BigInt(pool.outcomes[1 - creatorOutcomeIndex]?.total_staked || '0') === 0n);
+
+  const isBeforeJoinDeadline = pool ? Math.floor(Date.now() / 1000) < pool.join_deadline : false;
+
+  const isUserNotParticipant = connectedAddress && pool ? (
+    connectedAddress.toLowerCase() !== pool.creator.toLowerCase() &&
+    !hasJoined
+  ) : true;
+
+  const canTakeOpenSlot = !!(
+    pool &&
+    pool.is_open_duel &&
+    isOpponentSideEmpty &&
+    pool.state === 0 &&
+    isBeforeJoinDeadline &&
+    connectedAddress &&
+    isUserNotParticipant
+  );
+
   // Estimate winnings payout: share = (stake * total_pool) / winning_pool
   const winningOutcome = pool && pool.winning_outcome_index !== 255 ? pool.outcomes[pool.winning_outcome_index] : null;
   let estimatedPayoutStr = '';
@@ -1027,7 +1047,7 @@ export default function PoolDetailDrawer() {
       return;
     }
     setValidationError(null);
-    setActiveAction('join');
+    setActiveAction(canTakeOpenSlot ? 'take_open_slot' : 'join');
     setIsConfirmOpen(true);
   };
 
@@ -1088,6 +1108,15 @@ export default function PoolDetailDrawer() {
     if (!pool) return;
     setIsConfirmOpen(false);
 
+    // Double-check NaN-guard on stake amount before submitting write transaction
+    if (activeAction === 'join' || activeAction === 'increase' || activeAction === 'take_open_slot') {
+      const val = parseFloat(stakeAmount);
+      if (isNaN(val) || val < 0.01) {
+        setValidationError('Minimum stake amount is 0.01 GEN');
+        return;
+      }
+    }
+
     try {
       if (activeAction === 'increase') {
         let freshAmount = '0';
@@ -1132,6 +1161,21 @@ export default function PoolDetailDrawer() {
           await write({
             address: CONTRACT_ADDRESS,
             functionName: 'join_pool',
+            args: [BigInt(pool.pool_id), selectedOutcomeIndex],
+            value: genToWei(stakeAmount),
+            trackAction: 'join_pool',
+            trackTarget: String(pool.pool_id),
+          });
+        } finally {
+          setIsSubmittingJoin(false);
+        }
+      } else if (activeAction === 'take_open_slot') {
+        if (selectedOutcomeIndex === null) return;
+        setIsSubmittingJoin(true);
+        try {
+          await write({
+            address: CONTRACT_ADDRESS,
+            functionName: 'take_open_slot',
             args: [BigInt(pool.pool_id), selectedOutcomeIndex],
             value: genToWei(stakeAmount),
             trackAction: 'join_pool',
@@ -1951,7 +1995,7 @@ export default function PoolDetailDrawer() {
                         </div>
                       )}
                     </div>
-                  ) : !isWhitelisted ? (
+                  ) : (!isWhitelisted && !canTakeOpenSlot) ? (
                     // Whitelist guard
                     <div className="p-4 bg-brand-magenta/5 border border-brand-magenta/15 rounded-2xl flex items-start gap-3 text-xs text-brand-magenta/80">
                       <AlertCircle className="w-4 h-4 text-brand-magenta/60 shrink-0 mt-0.5" />
@@ -2127,7 +2171,7 @@ export default function PoolDetailDrawer() {
                               Signing...
                             </>
                           ) : (
-                            'Join Event'
+                            canTakeOpenSlot ? 'Take Open Slot' : 'Join Event'
                           )}
                         </button>
                       </div>
@@ -2847,6 +2891,8 @@ export default function PoolDetailDrawer() {
               ? 'Confirm Block and Refund Pool'
               : activeAction === 'emergency_withdraw'
               ? 'Confirm Emergency Withdrawal'
+              : activeAction === 'take_open_slot'
+              ? 'Confirm Take Open Slot'
               : 'Confirm Staking Action'
           }
         >
