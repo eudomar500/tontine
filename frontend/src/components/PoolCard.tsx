@@ -2,7 +2,7 @@
 
 import React from 'react';
 import Avatar from 'boring-avatars';
-import { PoolSummary, weiToGen, stateLabel, truncateAddress, timeRemaining } from '../services/contract';
+import { PoolSummary, weiToGen, stateLabel, truncateAddress, timeRemaining, cleanTerms } from '../services/contract';
 import { useThemeStore } from '../store/theme';
 
 interface PoolCardProps {
@@ -56,20 +56,20 @@ export default function PoolCard({ pool, isActive = true, displayIndex }: PoolCa
   };
 
   return (
-    <div className={`relative flex flex-col justify-between p-6 sm:p-7 w-full h-[460px] bg-charcoal-medium/40 dark:bg-charcoal-medium/20 border border-charcoal-light/30 rounded-2xl shadow-xl transition-all duration-300 backdrop-blur-md select-none overflow-hidden ${isActive ? 'cursor-pointer hover:border-charcoal-light/60 shadow-brand-gold/5 dark:hover:shadow-brand-magenta/5' : 'cursor-default'}`}>
-      
+    <div className={`relative flex flex-col justify-between p-5 sm:p-6 w-full h-[460px] bg-charcoal-medium/40 dark:bg-charcoal-medium/20 border border-charcoal-light/30 rounded-2xl shadow-xl transition-all duration-300 backdrop-blur-md select-none overflow-hidden ${isActive ? 'cursor-pointer hover:border-charcoal-light/60 shadow-brand-gold/5 dark:hover:shadow-brand-magenta/5' : 'cursor-default'}`}>
+
       {/* Border Beam */}
-      <div 
-        className="border-beam-container" 
+      <div
+        className="border-beam-container"
         style={{
           '--border-beam-width': '1.2px',
           '--border-beam-dark-opacity': '0.22',
           '--border-beam-light-opacity': '0.12',
         } as React.CSSProperties}
       />
-      
+
       {/* Top Header Section */}
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-3">
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-2">
             <span
@@ -86,8 +86,13 @@ export default function PoolCard({ pool, isActive = true, displayIndex }: PoolCa
                 {pool.category}
               </span>
             )}
-            {pool.is_open && (
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-brand-gold/10 text-brand-gold border border-brand-gold/20 uppercase tracking-wider">
+            {pool.is_open && Math.floor(Date.now() / 1000) < pool.join_deadline && (
+              <span
+                className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-brand-gold/10 text-brand-gold border border-brand-gold/20 uppercase tracking-wider"
+                style={{
+                  textShadow: theme === 'dark' ? '0 0 8px rgba(201, 162, 39, 0.45)' : '0 0 8px rgba(201, 162, 39, 0.25)',
+                }}
+              >
                 Open
               </span>
             )}
@@ -107,50 +112,73 @@ export default function PoolCard({ pool, isActive = true, displayIndex }: PoolCa
       <div className="flex-1 flex flex-col justify-between">
         <div>
           {/* Question / Short terms */}
-          <h3 className="text-lg sm:text-xl font-bold text-foreground leading-snug tracking-tight mb-5 line-clamp-2 min-h-[56px]" title={pool.terms_short}>
-            {pool.terms_short}
+          <h3 className="text-base font-bold text-foreground leading-snug tracking-tight mb-3 line-clamp-2 min-h-[40px]" title={pool.terms_short}>
+            {cleanTerms(pool.terms_short) || pool.name || 'Untitled'}
           </h3>
 
           {/* Outcomes staked list */}
-          <div className="space-y-2.5 mb-5">
-            {pool.outcome_labels.map((label, idx) => {
-              const isWinner = pool.state === 2 && pool.winning_outcome_index !== 255 && pool.winning_outcome_index === idx;
-              return (
-                <div
-                  key={idx}
-                  className={`flex items-center justify-between px-3 py-2 rounded-xl border transition-all duration-300 ${
-                    isWinner
-                      ? 'bg-brand-gold/10 border-brand-gold/40 text-brand-gold'
-                      : 'bg-charcoal-dark/40 dark:bg-charcoal-dark/60 border-charcoal-light/20 text-foreground/80'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium">{label}</span>
-                    {isWinner && (
-                      <span className="text-[9px] px-1.5 py-0.5 bg-brand-gold text-charcoal-dark uppercase tracking-wider font-extrabold rounded-md">
-                        Winner
+          <div className="space-y-1.5 mb-4">
+            {(() => {
+              const totalOutcomes = pool.outcome_labels.length;
+              const showAll = totalOutcomes <= 5;
+              const displayCount = showAll ? totalOutcomes : 4;
+
+              const rows = [];
+              for (let idx = 0; idx < displayCount; idx++) {
+                const label = pool.outcome_labels[idx];
+                const isWinner = pool.state === 2 && pool.winning_outcome_index !== 255 && pool.winning_outcome_index === idx;
+                rows.push(
+                  <div
+                    key={idx}
+                    className={`flex items-center justify-between px-3 py-1 rounded-xl border transition-all duration-300 ${
+                      isWinner
+                        ? 'bg-brand-gold/10 border-brand-gold/40 text-brand-gold'
+                        : 'bg-charcoal-dark/40 dark:bg-charcoal-dark/60 border-charcoal-light/20 text-foreground/80'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <span className="text-xs font-medium truncate block max-w-[160px] sm:max-w-[200px]" title={label}>{label}</span>
+                      {isWinner && (
+                        <span className="text-[9px] px-1.5 py-0.5 bg-brand-gold text-charcoal-dark uppercase tracking-wider font-extrabold rounded-md shrink-0">
+                          Winner
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-right">
+                      <span className="text-xs font-semibold block">
+                        {weiToGen(pool.outcome_totals[idx])} GEN
                       </span>
-                    )}
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <span className="text-sm font-semibold block">
-                      {weiToGen(pool.outcome_totals[idx])} GEN
+                );
+              }
+
+              if (!showAll) {
+                rows.push(
+                  <div
+                    key="more-indicator"
+                    className="flex items-center justify-center px-3 py-1 rounded-xl border border-dashed border-brand-gold/30 bg-brand-gold/5 text-brand-gold hover:border-brand-gold/50 transition-all duration-300"
+                  >
+                    <span className="text-xs font-bold font-display uppercase tracking-wider">
+                      + {totalOutcomes - 4} more outcomes
                     </span>
                   </div>
-                </div>
-              );
-            })}
+                );
+              }
+
+              return rows;
+            })()}
           </div>
 
           {/* Relative Stake proportion bar */}
-          <div className="space-y-1.5 mb-6">
+          <div className="space-y-1.5 mb-4">
             <div className="h-1.5 w-full rounded-full overflow-hidden flex bg-charcoal-light/20">
               {proportions.map((percentage, index) => {
                 let bgColor = 'bg-foreground/20';
                 if (index === 0) bgColor = 'bg-brand-gold';
                 else if (index === 1) bgColor = 'bg-brand-magenta';
                 else if (index === 2) bgColor = 'bg-foreground/55';
-                
+
                 return (
                   <div
                     key={index}
@@ -168,7 +196,7 @@ export default function PoolCard({ pool, isActive = true, displayIndex }: PoolCa
         </div>
 
         {/* Highlighted Total Event Section */}
-        <div className="bg-charcoal-dark/20 dark:bg-charcoal-dark/40 border border-charcoal-light/25 rounded-xl p-3.5 flex justify-between items-center mb-6">
+        <div className="bg-charcoal-dark/20 dark:bg-charcoal-dark/40 border border-charcoal-light/25 rounded-xl p-2.5 flex justify-between items-center mb-4">
           <span className="text-xs text-foreground/50 font-medium">
             Total Event Amount
           </span>

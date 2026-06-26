@@ -2,7 +2,7 @@
 
 import React from 'react';
 import Avatar from 'boring-avatars';
-import { PoolSummary, weiToGen, stateLabel, truncateAddress, timeRemaining } from '../services/contract';
+import { PoolSummary, weiToGen, stateLabel, truncateAddress, timeRemaining, cleanTerms } from '../services/contract';
 import { useThemeStore } from '../store/theme';
 
 interface DuelCardProps {
@@ -189,7 +189,7 @@ export default function DuelCard({ pool, isActive = true, onClick, displayIndex 
             {duelTitle}
           </h3>
           <p className="text-xs text-foreground/50 leading-relaxed font-light line-clamp-2" title={pool.terms_short}>
-            {pool.terms_short}
+            {cleanTerms(pool.terms_short) || duelTitle || 'Untitled'}
           </p>
         </div>
 
