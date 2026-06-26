@@ -55,12 +55,14 @@ export default function LightSweep() {
 
       const isMobile = w < 768;
       const cols = isMobile ? 16 : 28;
-      const rows = isMobile ? 8 : 14;
+      const rows = isMobile 
+        ? Math.max(8, Math.floor(h / 70)) 
+        : Math.max(14, Math.floor(h / 90));
 
       for (let c = 0; c < cols; c++) {
         for (let r = 0; r < rows; r++) {
           const x = w * 0.05 + (c / (cols - 1)) * w * 0.9;
-          const y = h * 0.08 + (r / (rows - 1)) * h * 0.84;
+          const y = h * 0.02 + (r / (rows - 1)) * h * 0.90;
           
           const size = Math.random() * 0.8 + 1.2;
           const color = colors[(c + r) % colors.length];
@@ -103,7 +105,7 @@ export default function LightSweep() {
       supportsHover = window.matchMedia('(hover: hover)').matches;
     }
 
-    const parent = canvas.parentElement;
+    const parent = (canvas.closest('.relative') as HTMLElement | null) || canvas.parentElement;
     if (parent && supportsHover) {
       parent.addEventListener('mousemove', handleMouseMove);
       parent.addEventListener('mouseleave', handleMouseLeave);

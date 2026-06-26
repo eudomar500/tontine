@@ -1,11 +1,8 @@
-'use client';
-
 import React, { useRef } from 'react';
 import Image from 'next/image';
-import { Wallet } from 'lucide-react';
-import { useWalletStore } from '../store/wallet';
-import { useThemeStore } from '../store/theme';
+import Link from 'next/link';
 import LightSweep from './LightSweep';
+import { useThemeStore } from '../store/theme';
 
 interface TiltCardProps {
   number: string;
@@ -122,18 +119,17 @@ function TiltCard({ number, title, description }: TiltCardProps) {
 }
 
 export default function Hero() {
-  const { connectedAddress, setModalOpen } = useWalletStore();
   const theme = useThemeStore((state) => state.theme);
 
   return (
-    <section className="relative flex flex-col items-center justify-center text-center py-36 md:py-48 overflow-hidden w-full">
+    <section className="relative flex flex-col items-center justify-center text-center py-24 md:py-32 overflow-hidden w-full">
       {/* Radial glow backdrop */}
       <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] rounded-full bg-radial from-brand-magenta/5 via-brand-gold/5 to-transparent blur-3xl pointer-events-none" />
 
       {/* Looping stage lights sweep backdrop */}
       {theme === 'dark' && <LightSweep />}
 
-      <div className="relative z-10 w-full max-w-7xl mx-auto px-6 sm:px-8 flex flex-col items-center">
+      <div className="relative z-10 w-full max-w-5xl mx-auto px-6 sm:px-8 flex flex-col items-center">
         {/* Centerpiece gradient wordmark logo */}
         <div className="mb-12 md:mb-16 animate-fade-in select-none">
           <Image
@@ -151,17 +147,26 @@ export default function Hero() {
           Private peer-to-peer agreements on GenLayer, resolved by decentralized consensus.
         </h1>
 
-        {/* CTA connection trigger */}
-        {!connectedAddress && (
-          <button
-            onClick={() => setModalOpen(true)}
-            className="flex items-center gap-2 px-6 py-3 bg-foreground hover:bg-warm-white text-background rounded-xl font-semibold tracking-wide transition-all duration-300 shadow-lg hover:shadow-warm-white/10 mb-32 sm:mb-40 md:mb-48 cursor-pointer text-sm animate-fade-in-up"
-            style={{ animationDelay: '150ms', animationFillMode: 'both' }}
+        {/* Hero CTAs */}
+        <div 
+          className="flex flex-wrap items-center justify-center gap-4 mb-32 sm:mb-40 md:mb-48 animate-fade-in-up"
+          style={{ animationDelay: '150ms', animationFillMode: 'both' }}
+        >
+          <Link
+            href="/explore"
+            className="px-6 py-3 bg-gradient-to-r from-brand-gold to-brand-magenta text-[#f1ece3] hover:opacity-90 font-semibold rounded-xl tracking-wide transition-all duration-300 shadow-lg hover:shadow-brand-gold/10 hover:shadow-brand-magenta/10 text-sm cursor-pointer"
           >
-            <Wallet className="w-4 h-4" />
-            Connect Wallet to Start
-          </button>
-        )}
+            Explore Events
+          </Link>
+          <a
+            href="https://github.com/tontinelabs/tontine/blob/main/docs/resolution.md"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-6 py-3 border border-charcoal-light/40 hover:border-foreground/30 text-foreground hover:bg-charcoal-medium/20 rounded-xl font-semibold tracking-wide transition-all duration-300 text-sm cursor-pointer"
+          >
+            Read docs
+          </a>
+        </div>
 
         {/* Feature highlight grid */}
         <div 
@@ -183,7 +188,7 @@ export default function Hero() {
           <TiltCard
             number="03"
             title="LLM Consensus"
-            description="Upon event maturity, GenLayer LLM consensus processes web sources and splits the pooled pot pro-rata among winning outcomes."
+            description="Upon event maturity, GenLayer LLM consensus processes web sources and splits the pot pro-rata among winning outcomes."
           />
         </div>
       </div>

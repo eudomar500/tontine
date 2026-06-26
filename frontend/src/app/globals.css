@@ -107,7 +107,7 @@ body {
     #b23a6e 340deg,
     #c9a227 360deg
   );
-  animation: border-beam-rotate 8s linear infinite;
+  animation: border-beam-rotate var(--border-beam-duration, 8s) linear infinite;
   opacity: var(--border-beam-light-opacity, 0.2);
 }
 
