@@ -93,7 +93,7 @@ export function weiToGen(wei: string): string {
 export function stateLabel(state: number): string {
   switch (state) {
     case 0:
-      return 'Open';
+      return 'Active';
     case 1:
       return 'Resolving';
     case 2:
@@ -360,6 +360,17 @@ export async function checkJoinPoolPredicate(poolId: number, address: string): P
     }
     throw err;
   }
+}
+
+export function cleanTerms(terms: string): string {
+  if (!terms) return '';
+  return terms.replace(/\s*\(Resolution reference:[^)]*\)/gi, '').trim();
+}
+
+export function getResolutionReference(terms: string): string | null {
+  if (!terms) return null;
+  const match = terms.match(/\(Resolution reference:\s*([^)]+)\)/i);
+  return match ? match[1].trim() : null;
 }
 
 

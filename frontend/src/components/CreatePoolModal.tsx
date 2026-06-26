@@ -364,9 +364,8 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
       setValidationError('Resolution date or moment is required');
       return false;
     }
-    const combinedTerms = `${terms.trim()} (Resolution reference: ${resolutionDate.trim()})`;
-    if (combinedTerms.length > 2000) {
-      setValidationError('Combined terms and resolution reference cannot exceed 2000 characters');
+    if (terms.trim().length > 2000) {
+      setValidationError('Agreement terms cannot exceed 2000 characters');
       return false;
     }
 
@@ -525,7 +524,7 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
         address: CONTRACT_ADDRESS,
         functionName: 'create_pool',
         args: [
-          combinedTerms,
+          terms.trim(),
           displayOutcomes.map((o) => o.trim()),
           sources.map((s) => s.trim()),
           whitelistAsCalldataAddresses,

@@ -20,9 +20,10 @@ import { useTrackedContractWrite } from '../hooks/useTrackedContractWrite';
 import { usePendingWritesStore } from '../store/pendingWrites';
 import { useTxStore } from '../store/transactions';
 import ConfirmModal from './ConfirmModal';
-import { getPool, Pool, weiToGen, stateLabel, truncateAddress, CONTRACT_ADDRESS, getStake, Stake, checkJoinPoolPredicate, getPoolSummary } from '../services/contract';
+import { getPool, Pool, weiToGen, stateLabel, truncateAddress, CONTRACT_ADDRESS, getStake, Stake, checkJoinPoolPredicate, getPoolSummary, cleanTerms, getResolutionReference } from '../services/contract';
 import { useAdminStore } from '../store/admin';
 import Avatar from 'boring-avatars';
+import { useThemeStore } from '../store/theme';
 
 
 /**
@@ -95,8 +96,6 @@ export default function PoolDetailDrawer() {
 
   const isDuel = isDuelResolved === true;
 
-  // Derive the display index synchronously from the current list state.
-  // Calculate displayIndex by searching the filtered store list (or fallback to the unfiltered list).
   const getDisplayIndex = () => {
     if (selectedPoolId === null) return null;
     const targetList = isDuel
@@ -115,23 +114,14 @@ export default function PoolDetailDrawer() {
 
     return null;
   };
-
   const displayIndex = getDisplayIndex();
 
-  const renderHeaderIndex = () => {
-    if (displayIndex === null) {
-      return <span className="inline-block w-6 h-3.5 bg-charcoal-light/25 rounded animate-pulse align-middle" />;
-    }
-    return `#${displayIndex}`;
-  };
+  const theme = useThemeStore((state) => state.theme);
+  const isOpenPool = pool !== null ? pool.is_open : selectedPoolSummary?.is_open;
+  const joinDeadline = pool !== null ? pool.join_deadline : selectedPoolSummary?.join_deadline;
+  const isJoinWindowLive = joinDeadline ? Math.floor(Date.now() / 1000) < joinDeadline : false;
 
-  // Resolve header type label or render a temporary loading indicator during cache-miss loads.
-  const renderHeaderLabel = () => {
-    if (isDuelResolved === null) {
-      return <span className="inline-block w-8 h-3.5 bg-charcoal-light/25 rounded animate-pulse align-middle" />;
-    }
-    return isDuelResolved ? 'Duel' : 'Event';
-  };
+
 
   const category = pool?.category || selectedPoolSummary?.category;
   const name = pool?.name || selectedPoolSummary?.name;
@@ -1357,12 +1347,32 @@ export default function PoolDetailDrawer() {
         <div className="flex items-center justify-between px-6 py-5 border-b border-charcoal-light/25 bg-charcoal-medium/20">
           <div className="flex flex-col gap-1.5">
             <div className="flex items-center gap-2 animate-fade-in">
-              <span className="text-xs font-semibold text-foreground/45 tracking-widest uppercase inline-flex items-center gap-1">
-                {renderHeaderLabel()} {renderHeaderIndex()}
-              </span>
-              <span className="text-[10px] font-semibold text-foreground/30 font-mono">
-                (On-chain ID: {selectedPoolId})
-              </span>
+              {displayIndex !== null && (
+                <span
+                  className="text-xs font-semibold tracking-widest uppercase"
+                  style={{
+                    color: theme === 'dark' ? '#9FFF3C' : '#478A00',
+                    textShadow: theme === 'dark' ? '0 0 8px rgba(159, 255, 60, 0.4)' : '0 0 8px rgba(71, 138, 0, 0.25)',
+                  }}
+                >
+                  {isDuel ? 'Duel' : 'Event'} #{displayIndex}
+                </span>
+              )}
+              {state !== undefined && (
+                <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full border ${getBadgeStyles(state)}`}>
+                  {stateLabel(state)}
+                </span>
+              )}
+              {isOpenPool && isJoinWindowLive && (
+                <span
+                  className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-brand-gold/10 text-brand-gold border border-brand-gold/20 uppercase tracking-wider"
+                  style={{
+                    textShadow: theme === 'dark' ? '0 0 8px rgba(201, 162, 39, 0.45)' : '0 0 8px rgba(201, 162, 39, 0.25)',
+                  }}
+                >
+                  Open
+                </span>
+              )}
               {category && category.trim() !== '' && (
                 <span className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-charcoal-light/30 text-foreground/60 border border-charcoal-light/20 uppercase tracking-wider">
                   {category}
@@ -1374,13 +1384,18 @@ export default function PoolDetailDrawer() {
                 {isDuel ? 'Title: ' : 'Room: '}<span className="font-normal text-foreground/90">{isDuel && name.toLowerCase().startsWith('duel:') ? name.slice(5) : name}</span>
               </span>
             )}
-            {state !== undefined && (
-              <div>
-                <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full border ${getBadgeStyles(state)}`}>
-                  {stateLabel(state)}
-                </span>
-              </div>
-            )}
+            <div>
+              <a
+                href={`https://explorer-bradbury.genlayer.com/address/${CONTRACT_ADDRESS}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[10px] font-semibold text-foreground/30 hover:text-foreground/60 transition-all font-mono underline decoration-dotted inline-flex items-center gap-0.5"
+                title="View contract on explorer"
+              >
+                (View Contract)
+                <ExternalLink className="w-2.5 h-2.5" />
+              </a>
+            </div>
           </div>
           <button
             onClick={() => setSelectedPoolId(null)}
@@ -1447,7 +1462,7 @@ export default function PoolDetailDrawer() {
                   Agreement Terms
                 </div>
                 <p className="text-base text-foreground/85 leading-relaxed font-light select-text">
-                  {pool.terms}
+                  {cleanTerms(pool.terms) || (isDuel ? (pool.name.toLowerCase().startsWith('duel:') ? pool.name.slice(5) : pool.name) : pool.name) || 'Untitled'}
                 </p>
               </div>
 
@@ -2899,6 +2914,12 @@ export default function PoolDetailDrawer() {
                   <div className="flex items-start justify-between bg-charcoal-medium/20 border border-charcoal-light/15 p-3 rounded-xl">
                     <span className="text-xs font-semibold text-foreground/50">Resolution Target</span>
                     <span className="text-xs font-medium text-foreground/80">{formatDate(pool.resolution_deadline)}</span>
+                  </div>
+                  <div className="flex items-start justify-between bg-charcoal-medium/20 border border-charcoal-light/15 p-3 rounded-xl">
+                    <span className="text-xs font-semibold text-foreground/50">Resolution Reference</span>
+                    <span className="text-xs font-medium text-foreground/80">
+                      {getResolutionReference(pool.terms) || formatDate(pool.resolution_deadline)}
+                    </span>
                   </div>
                   <div className="flex items-start justify-between bg-charcoal-medium/20 border border-charcoal-light/15 p-3 rounded-xl">
                     <span className="text-xs font-semibold text-foreground/50">Timeout Limit</span>
