@@ -43,24 +43,20 @@ export async function withRateLimitRetry<T>(
 }
 
 /**
- * Queue to serialize RPC reads and ensure a minimum delay between sequential calls.
+ * Queue to process RPC reads with a concurrency pool and rate-limit spacing.
  */
 class RpcQueue {
-  private lastCallTime = 0;
   private queue: (() => Promise<any>)[] = [];
-  private running = false;
+  private activeCount = 0;
+  private maxConcurrency = 2;
+  private lastStartTime = 0;
+  private processing = false;
 
   async enqueue<T>(fn: () => Promise<T>): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       this.queue.push(async () => {
         try {
-          const now = Date.now();
-          const timeSinceLast = now - this.lastCallTime;
-          if (timeSinceLast < MIN_DELAY_MS) {
-            await delay(MIN_DELAY_MS - timeSinceLast);
-          }
           const result = await fn();
-          this.lastCallTime = Date.now();
           resolve(result);
         } catch (error) {
           reject(error);
@@ -71,19 +67,29 @@ class RpcQueue {
   }
 
   private async process() {
-    if (this.running || this.queue.length === 0) return;
-    this.running = true;
-    while (this.queue.length > 0) {
+    if (this.processing) return;
+    this.processing = true;
+
+    while (this.queue.length > 0 && this.activeCount < this.maxConcurrency) {
+      const now = Date.now();
+      const timeSinceLastStart = now - this.lastStartTime;
+      if (timeSinceLastStart < MIN_DELAY_MS) {
+        await delay(MIN_DELAY_MS - timeSinceLastStart);
+        continue;
+      }
+
       const nextFn = this.queue.shift();
       if (nextFn) {
-        try {
-          await nextFn();
-        } catch (e) {
-          // Errors are handled inside individual promises returned by enqueue
-        }
+        this.activeCount++;
+        this.lastStartTime = Date.now();
+        nextFn().finally(() => {
+          this.activeCount--;
+          this.process();
+        });
       }
     }
-    this.running = false;
+
+    this.processing = false;
   }
 }
 

@@ -17,7 +17,7 @@ interface PoolsState {
   loadMyPools: (address: string) => Promise<void>;
 }
 
-export const usePoolsStore = create<PoolsState>((set) => ({
+export const usePoolsStore = create<PoolsState>((set, get) => ({
   pools: [],
   selectedCategory: 'All',
   selectedPoolId: null,
@@ -28,28 +28,71 @@ export const usePoolsStore = create<PoolsState>((set) => ({
   myPoolsLoading: false,
 
   loadPools: async () => {
-    set({ isLoading: true, error: null });
+    const currentPools = get().pools;
+    const isInitialLoad = currentPools.length === 0;
+
+    if (isInitialLoad) {
+      set({ isLoading: true, error: null });
+    } else {
+      set({ error: null });
+    }
+
     try {
       const count = await getPoolCount();
-      const loadedPools: PoolSummary[] = [];
+      const cachedMap = new Map(currentPools.map((p) => [p.pool_id, p]));
+      const idsToFetch: number[] = [];
 
       for (let id = 1; id <= count; id++) {
-        try {
-          const summary = await getPoolSummary(id);
-          loadedPools.push(summary);
-        } catch (err) {
-          // Failure isolation: log error but do not disrupt other pool loads
-          console.warn(`Failed to fetch pool ${id}:`, err);
+        const cached = cachedMap.get(id);
+        // Avoid reloading final states because they are immutable on-chain
+        if (!cached || cached.state === 0 || cached.state === 1) {
+          idsToFetch.push(id);
         }
       }
 
-      set({ pools: loadedPools, isLoading: false });
+      if (idsToFetch.length === 0) {
+        set({ isLoading: false });
+        return;
+      }
+
+      let completed = 0;
+
+      await Promise.all(
+        idsToFetch.map(async (id) => {
+          try {
+            const summary = await getPoolSummary(id);
+            set((state) => {
+              const updatedPools = [...state.pools];
+              const idx = updatedPools.findIndex((p) => p.pool_id === id);
+              if (idx >= 0) {
+                updatedPools[idx] = summary;
+              } else {
+                updatedPools.push(summary);
+              }
+              // Keep sorted to preserve order in the UI carousel
+              updatedPools.sort((a, b) => a.pool_id - b.pool_id);
+              return { pools: updatedPools };
+            });
+          } catch (err) {
+            // Allow other queries to succeed even if one contract read fails
+            console.warn(`Failed to fetch pool ${id}:`, err);
+          } finally {
+            completed++;
+            if (completed === idsToFetch.length) {
+              set({ isLoading: false });
+            }
+          }
+        })
+      );
     } catch (err: any) {
       console.error('Error loading prediction events:', err);
-      set({
-        isLoading: false,
-        error: err?.message || 'Failed to load events from contract',
-      });
+      // Prevent blocking the screen with error messages if we have cached results to show
+      if (get().pools.length === 0) {
+        set({
+          isLoading: false,
+          error: err?.message || 'Failed to load events from contract',
+        });
+      }
     }
   },
 
