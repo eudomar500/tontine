@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import Image from 'next/image';
+import Link from 'next/link';
 import Avatar from 'boring-avatars';
 import { Copy, Check, ExternalLink, Wallet, Sun, Moon } from 'lucide-react';
 import { useWalletStore } from '../store/wallet';
@@ -104,12 +105,12 @@ export default function Header() {
         </a>
 
         <nav className="hidden sm:flex items-center gap-6">
-          <a
-            href="/#explore"
+          <Link
+            href="/explore"
             className="text-sm font-semibold tracking-wide text-foreground/50 hover:text-foreground transition-all duration-200"
           >
             Explore
-          </a>
+          </Link>
           {isAdmin && (
             <a
               href="/admin"
