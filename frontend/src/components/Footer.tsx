@@ -73,24 +73,14 @@ export default function Footer() {
             </h5>
             <ul className="flex flex-col gap-2.5 text-xs text-foreground/50">
               <li>
-                <a
-                  href="https://github.com/tontinelabs/tontine/blob/main/docs/resolution.md"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="hover:text-foreground transition-colors duration-200 font-normal tracking-wide"
-                >
+                <span className="text-foreground/30 font-normal tracking-wide select-none cursor-default">
                   Docs
-                </a>
+                </span>
               </li>
               <li>
-                <a
-                  href="https://github.com/tontinelabs/tontine"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="hover:text-foreground transition-colors duration-200 font-normal tracking-wide"
-                >
+                <span className="text-foreground/30 font-normal tracking-wide select-none cursor-default">
                   GitHub
-                </a>
+                </span>
               </li>
               <li>
                 <a
