@@ -3,6 +3,7 @@
 import React from 'react';
 import Header from '../../components/Header';
 import PoolExplorer from '../../components/PoolExplorer';
+import Leaderboard from '../../components/Leaderboard';
 import WalletModal from '../../components/WalletModal';
 import NetworkStatus from '../../components/NetworkStatus';
 import Footer from '../../components/Footer';
@@ -26,6 +27,7 @@ export default function ExplorePage() {
         </div>
 
         <PoolExplorer />
+        <Leaderboard />
       </main>
 
       {/* Footer Navigation */}

@@ -373,6 +373,53 @@ export function getResolutionReference(terms: string): string | null {
   return match ? match[1].trim() : null;
 }
 
+export const LEADERBOARD_ADDRESS = '0x886C2a74EbFef115a874F3d805FBDdcA70f7A558';
+
+export interface LeaderboardEntry {
+  wallet: string;
+  pools_won: number;
+  pools_resolved: number;
+  win_rate_bps: number;
+}
+
+/**
+ * Fetches the total number of entries tracked in the leaderboard.
+ */
+export async function getLeaderboardSize(): Promise<number> {
+  return rpcQueue.enqueue(() =>
+    withRateLimitRetry(async () => {
+      const res = await client.readContract({
+        address: LEADERBOARD_ADDRESS,
+        functionName: 'get_leaderboard_size',
+      });
+      return Number(res);
+    })
+  );
+}
+
+/**
+ * Fetches raw entries from the leaderboard contract within a specified offset and limit.
+ */
+export async function getLeaderboardRange(offset: number, limit: number): Promise<LeaderboardEntry[]> {
+  return rpcQueue.enqueue(() =>
+    withRateLimitRetry(async () => {
+      const res = await client.readContract({
+        address: LEADERBOARD_ADDRESS,
+        functionName: 'get_leaderboard_range',
+        args: [offset, limit],
+      });
+      if (!Array.isArray(res)) return [];
+      return res.map((entry: any) => ({
+        wallet: String(entry.wallet || entry[0] || ''),
+        pools_won: Number(entry.pools_won ?? entry[1] ?? 0),
+        pools_resolved: Number(entry.pools_resolved ?? entry[2] ?? 0),
+        win_rate_bps: Number(entry.win_rate_bps ?? entry[3] ?? 0),
+      }));
+    })
+  );
+}
+
+
 
 
 
