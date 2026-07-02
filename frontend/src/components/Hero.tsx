@@ -159,7 +159,7 @@ export default function Hero() {
             Explore Events
           </Link>
           <a
-            href="https://github.com/tontinelabs/tontine/blob/main/docs/resolution.md"
+            href="https://docs.genlayer.com"
             target="_blank"
             rel="noopener noreferrer"
             className="px-6 py-3 border border-charcoal-light/40 hover:border-foreground/30 text-foreground hover:bg-charcoal-medium/20 rounded-xl font-semibold tracking-wide transition-all duration-300 text-sm cursor-pointer"

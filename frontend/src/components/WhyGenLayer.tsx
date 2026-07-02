@@ -103,7 +103,7 @@ export default function WhyGenLayer() {
         </div>
 
         <a
-          href="https://github.com/tontinelabs/tontine/blob/main/docs/resolution.md"
+          href="https://docs.genlayer.com"
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex items-center gap-1.5 text-sm font-semibold tracking-wide text-brand-gold hover:text-brand-magenta transition-all duration-300 cursor-pointer"
