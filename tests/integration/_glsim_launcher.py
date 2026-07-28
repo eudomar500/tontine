@@ -28,6 +28,7 @@ Invoked as a subprocess by the integration conftest; configured through env.
 """
 
 import os
+import importlib
 import sys
 from pathlib import Path
 
@@ -109,7 +110,7 @@ def _preimport_genlayer_gl():
     os.dup2(fd, 0)
     os.close(fd)
     try:
-        import genlayer.gl  # noqa: F401  (imported for its caching side effect)
+        importlib.import_module("genlayer.gl")  # imported for its caching side effect
     finally:
         os.dup2(saved, 0)
         os.close(saved)
