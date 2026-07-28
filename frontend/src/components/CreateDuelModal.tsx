@@ -248,7 +248,7 @@ export default function CreateDuelModal({ isOpen, onClose }: CreateDuelModalProp
         // Duel is created via the same standard contract function
         functionName: 'create_pool',
         args: [
-          terms.trim(),
+          combinedTerms,
           displayOutcomes,
           sources.map((s) => s.trim()),
           whitelistAsCalldataAddresses,

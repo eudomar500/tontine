@@ -524,7 +524,7 @@ export default function CreatePoolModal({ isOpen, onClose }: CreatePoolModalProp
         address: CONTRACT_ADDRESS,
         functionName: 'create_pool',
         args: [
-          terms.trim(),
+          combinedTerms,
           displayOutcomes.map((o) => o.trim()),
           sources.map((s) => s.trim()),
           whitelistAsCalldataAddresses,
