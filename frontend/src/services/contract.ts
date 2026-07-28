@@ -2,7 +2,7 @@ import { createClient } from 'genlayer-js';
 import { CalldataAddress } from 'genlayer-js/types';
 import { testnetBradbury } from 'genlayer-js/chains';
 import { rpcQueue, withRateLimitRetry } from './rpc';
-export const CONTRACT_ADDRESS = '0x8116845930Cf90C29037D4972C2944eaF8a276bf';
+export const CONTRACT_ADDRESS = '0x76bcDfb9640920392881c5c4325D5a5C9E4A2Bb0';
 export const CATEGORIES = ['Crypto', 'Sports', 'Politics', 'Weather', 'Tech'] as const;
 const client = createClient({ chain: testnetBradbury });
 
@@ -373,7 +373,7 @@ export function getResolutionReference(terms: string): string | null {
   return match ? match[1].trim() : null;
 }
 
-export const LEADERBOARD_ADDRESS = '0x886C2a74EbFef115a874F3d805FBDdcA70f7A558';
+export const LEADERBOARD_ADDRESS = '0x2e99218639b76310213C0AeBc8ABdD6fdf6F5007';
 
 export interface LeaderboardEntry {
   wallet: string;
