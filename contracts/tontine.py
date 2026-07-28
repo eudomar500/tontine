@@ -185,8 +185,8 @@ ADMIN_TRANSFER_WINDOW = u256(604800)
 # Identifies which deployed build is live. The contract is immutable after
 # deployment on Bradbury, so there is no in-place upgrade; each redeploy bumps
 # this and get_contract_info surfaces it on-chain. The original 0x2F83 build
-# carried no version, this redeploy is version 4.
-CONTRACT_VERSION = u256(4)
+# carried no version, this redeploy is version 5.
+CONTRACT_VERSION = u256(5)
 
 CONFIDENCE_THRESHOLD = 70
 NO_INDEX = u8(255)
