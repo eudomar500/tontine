@@ -79,7 +79,7 @@ def test_sync_counts_settled_pool_and_skips_non_staker():
     report = "Final result: the home team won. The home side is the champion."
     install_mocks(
         {source_a: {"status": 200, "body": report}, source_b: {"status": 200, "body": report}},
-        llm={"impartial resolver": '{"reasoning": "home won", "outcome_index": 0, "confidence": 95, "evidence": "home won"}'},
+        llm={"impartial resolver": '{"reasoning": "home won", "per_source": [0, 0], "confidence": 95, "evidence": "home won"}'},
     )
 
     deadline = int(tontine.get_pool(args=[pid]).call()["resolution_deadline"])

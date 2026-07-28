@@ -212,14 +212,20 @@ def increase(contract, vm, wallet, pid, value):
     contract.increase_stake(pid)
 
 
-def mock_resolution(vm, outcome_index, confidence=90, evidence="settled by source"):
-    """Register web and LLM mocks that drive request_resolution to a verdict."""
+def mock_resolution(vm, outcome_index, confidence=90, evidence="settled by source", sources=2):
+    """Register web and LLM mocks that drive request_resolution to converge.
+
+    Every source resolves to the same outcome_index, which is what the contract
+    now requires before it settles. Pass a matching source count for pools that
+    declare more than the default two sources.
+    """
     vm.mock_web(r"https://ex\.com/.*", {"status": 200, "body": "result page"})
     vm.mock_llm(
         r"impartial resolver",
         json.dumps(
             {
-                "outcome_index": outcome_index,
+                "reasoning": "each source resolves the same way",
+                "per_source": [outcome_index for _ in range(sources)],
                 "confidence": confidence,
                 "evidence": evidence,
             }

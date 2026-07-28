@@ -167,14 +167,14 @@ def test_prompt_injection_does_not_settle_to_attacker_outcome():
     clear_mocks()
 
 
-def test_contradictory_sources_do_not_revert():
-    """Sources that disagree reach a terminal state without reverting.
+def test_contradictory_sources_do_not_settle():
+    """Sources that disagree never settle, and the transaction does not revert.
 
-    With a real model the verdict is nondeterministic: contradictory sources
-    should yield -1 and refund, but the model could occasionally pick a side.
-    The guarantee under test is that the transaction does not revert and the
-    pool is never left stuck in OPEN. The deterministic inconclusive-to-REFUNDED
-    mapping is covered in the direct tests.
+    With a real model the exact terminal state is nondeterministic: contradictory
+    sources either diverge and refund, or one source reads as indeterminate and
+    the pool stays pending. Either way the guarantee under test is that the pool
+    does not settle on a contested result. The deterministic refund and pending
+    mappings are covered in the direct tests.
     """
     contract, pid, accounts = _new_contested_pool()
     admin = accounts[0]
@@ -190,38 +190,37 @@ def test_contradictory_sources_do_not_revert():
     assert tx_execution_succeeded(receipt)
 
     pool = contract.get_pool(args=[pid]).call()
-    assert int(pool["state"]) != OPEN
+    assert int(pool["state"]) != SETTLED
     clear_mocks()
 
 
-def test_zero_usable_sources_refund():
-    """When no source renders any text, the pool refunds as inconclusive.
+def test_missing_source_stays_pending():
+    """A required source that renders no text leaves the pool pending.
 
-    render returns empty text for an unreachable or anti-bot page. With every
-    source empty there is nothing to resolve from, so decide() reports -1 without
-    calling the model and the pool persists REFUNDED with reason INCONCLUSIVE,
-    which is deterministic and does not depend on the live model.
+    render returns empty text for an unreachable or anti-bot page. With a source
+    missing the contract refuses to resolve on the remainder, and instead of
+    settling or refunding it returns the pool to OPEN so it can be retried once
+    the source recovers. This is deterministic and does not call the model.
     """
     contract, pid, accounts = _new_contested_pool()
     admin = accounts[0]
 
-    install_mocks({SOURCE_A: _page(""), SOURCE_B: _page("")})
+    install_mocks({SOURCE_A: _page("The Eagles won the 2027 final 28 to 17."), SOURCE_B: _page("")})
 
     receipt = _request_resolution(contract, pid, admin)
     assert tx_execution_succeeded(receipt)
 
     pool = contract.get_pool(args=[pid]).call()
-    assert int(pool["state"]) == REFUNDED
-    assert int(pool["refund_reason"]) == REASON_INCONCLUSIVE
+    assert int(pool["state"]) == OPEN
     clear_mocks()
 
 
-def test_out_of_range_index_refunds():
-    """An out-of-range outcome_index from the model refunds as inconclusive.
+def test_divergent_sources_refund():
+    """Sources that resolve to different outcomes refund as inconclusive.
 
-    A real model will not reliably emit an invalid index, so the model response
-    is mocked here to drive the contract's own bounds guard. The pool must never
-    index an outcome outside its range; instead it persists REFUNDED.
+    The per-source outcomes are mocked to diverge, which a real model will not
+    reliably produce, to drive the contract's convergence check deterministically.
+    No arbitrary winner is chosen; the pool persists REFUNDED.
     """
     contract, pid, accounts = _new_contested_pool()
     admin = accounts[0]
@@ -229,7 +228,7 @@ def test_out_of_range_index_refunds():
     page = "The Eagles won the 2027 final 28 to 17."
     install_mocks(
         {SOURCE_A: _page(page), SOURCE_B: _page(page)},
-        llm={"impartial resolver": '{"outcome_index": 99, "confidence": 95, "evidence": "x"}'},
+        llm={"impartial resolver": '{"reasoning": "x", "per_source": [0, 1], "confidence": 95, "evidence": "x"}'},
     )
 
     receipt = _request_resolution(contract, pid, admin)

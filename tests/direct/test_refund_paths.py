@@ -1,6 +1,8 @@
-"""Resolution outcomes that send a pool to REFUNDED rather than SETTLED."""
+"""Resolution outcomes that send a pool to REFUNDED rather than SETTLED.
 
-import json
+Source fetch failures and per-source convergence live in test_convergence; this
+file covers the refunds that do not depend on how the sources loaded.
+"""
 
 from conftest import (
     MIN_STAKE,
@@ -12,7 +14,6 @@ from conftest import (
     to_iso,
 )
 
-SETTLED = 2
 REFUNDED = 3
 REASON_NOBODY_WON = 3
 REASON_NO_REAL_CONTEST = 4
@@ -68,10 +69,9 @@ def test_no_real_contest_refunds_without_llm(direct_vm, deploy, alice, bob):
 
 
 def test_nobody_won_refunds(direct_vm, deploy, alice, bob):
-    """A verdict for an unfunded outcome refunds everyone.
+    """A converged verdict for an unfunded outcome refunds everyone.
 
-    Reaching this branch requires a real contest (two funded outcomes) and a
-    resolver verdict, so the mocked LLM is exercised here by design; the empty
+    Both sources converge on "draw" (index 2), which nobody staked. The empty
     winning outcome is only discovered after the verdict is read back.
     """
     contract = deploy()
@@ -86,7 +86,6 @@ def test_nobody_won_refunds(direct_vm, deploy, alice, bob):
     join(contract, direct_vm, bob, pid, 1, MIN_STAKE)
 
     direct_vm.warp(to_iso(BASE_EPOCH + 2 * HOUR + 1))
-    # The resolver picks "draw" (index 2), which nobody staked.
     mock_resolution(direct_vm, outcome_index=2)
     direct_vm.sender = alice
     contract.request_resolution(pid)
@@ -96,65 +95,13 @@ def test_nobody_won_refunds(direct_vm, deploy, alice, bob):
     assert int(pool.refund_reason) == REASON_NOBODY_WON
 
 
-def test_partial_sources_resolve(direct_vm, deploy, alice, bob):
-    """An empty source is skipped and the resolution proceeds from the rest.
-
-    One source renders no text and the other returns usable content. The empty
-    one is dropped instead of failing the whole resolution, and the verdict drawn
-    from the remaining source settles the pool.
-    """
-    contract = deploy()
-    pid = _contested(contract, direct_vm, alice, bob)
-
-    direct_vm.mock_web(r"https://ex\.com/a", {"status": 200, "body": ""})
-    direct_vm.mock_web(r"https://ex\.com/b", {"status": 200, "body": "home won the match"})
-    direct_vm.mock_llm(
-        r"impartial resolver",
-        json.dumps({"outcome_index": 0, "confidence": 90, "evidence": "home won"}),
-    )
-    direct_vm.sender = alice
-    contract.request_resolution(pid)
-
-    pool = contract.get_pool(pid)
-    assert int(pool.state) == SETTLED
-    assert int(pool.winning_outcome_index) == 0
-
-
-def test_zero_usable_sources_refund(direct_vm, deploy, alice, bob):
-    """When every source renders empty, the pool refunds as inconclusive.
-
-    No LLM mock is registered: with no usable content decide() reports -1 without
-    prompting the model, so the resolution refunds instead of reverting.
-    """
-    contract = deploy()
-    pid = _contested(contract, direct_vm, alice, bob)
-
-    direct_vm.mock_web(r"https://ex\.com/a", {"status": 200, "body": ""})
-    direct_vm.mock_web(r"https://ex\.com/b", {"status": 200, "body": ""})
-    direct_vm.sender = alice
-    contract.request_resolution(pid)
-
-    pool = contract.get_pool(pid)
-    assert int(pool.state) == REFUNDED
-    assert int(pool.refund_reason) == REASON_INCONCLUSIVE
-
-
-def test_inconclusive_verdict_refunds(direct_vm, deploy, alice, bob):
-    """A -1 verdict from the resolver refunds as inconclusive instead of reverting."""
-    contract = deploy()
-    pid = _contested(contract, direct_vm, alice, bob)
-
-    mock_resolution(direct_vm, outcome_index=-1)
-    direct_vm.sender = alice
-    contract.request_resolution(pid)
-
-    pool = contract.get_pool(pid)
-    assert int(pool.state) == REFUNDED
-    assert int(pool.refund_reason) == REASON_INCONCLUSIVE
-
-
 def test_low_confidence_refunds(direct_vm, deploy, alice, bob):
-    """A verdict below the confidence threshold refunds as inconclusive."""
+    """Sources that converge but below the confidence threshold refund.
+
+    The sources agree on the outcome, so this is not a divergence, but the
+    overall confidence is under the threshold, which the README documents as a
+    non-settle that returns funds.
+    """
     contract = deploy()
     pid = _contested(contract, direct_vm, alice, bob)
 
@@ -165,82 +112,3 @@ def test_low_confidence_refunds(direct_vm, deploy, alice, bob):
     pool = contract.get_pool(pid)
     assert int(pool.state) == REFUNDED
     assert int(pool.refund_reason) == REASON_INCONCLUSIVE
-
-
-def test_out_of_range_index_refunds(direct_vm, deploy, alice, bob):
-    """An out-of-range index from the resolver refunds as inconclusive."""
-    contract = deploy()
-    pid = _contested(contract, direct_vm, alice, bob)
-
-    mock_resolution(direct_vm, outcome_index=99)
-    direct_vm.sender = alice
-    contract.request_resolution(pid)
-
-    pool = contract.get_pool(pid)
-    assert int(pool.state) == REFUNDED
-    assert int(pool.refund_reason) == REASON_INCONCLUSIVE
-
-
-def test_raising_source_skipped_resolves(direct_vm, deploy, alice, bob):
-    """A source whose render raises is skipped, and a good source still settles.
-
-    In direct mode an unmocked URL makes web.render raise, which stands in for a
-    walled page that throws inside the headless render. The first source raises
-    and is dropped; the second returns content and drives the verdict.
-    """
-    contract = deploy()
-    pid = _contested(contract, direct_vm, alice, bob)
-
-    # /a is left unmocked so its render raises; /b returns usable content.
-    direct_vm.mock_web(r"https://ex\.com/b", {"status": 200, "body": "home won the match"})
-    direct_vm.mock_llm(
-        r"impartial resolver",
-        json.dumps({"outcome_index": 0, "confidence": 90, "evidence": "home won"}),
-    )
-    direct_vm.sender = alice
-    contract.request_resolution(pid)
-
-    pool = contract.get_pool(pid)
-    assert int(pool.state) == SETTLED
-    assert int(pool.winning_outcome_index) == 0
-
-
-def test_all_sources_raise_refund(direct_vm, deploy, alice, bob):
-    """When every source render raises, the pool refunds as inconclusive.
-
-    Both URLs are unmocked so both renders raise. With no usable content decide()
-    reports -1 without prompting the model, so the resolution refunds rather than
-    finalizing with an execution error.
-    """
-    contract = deploy()
-    pid = _contested(contract, direct_vm, alice, bob)
-
-    direct_vm.sender = alice
-    contract.request_resolution(pid)
-
-    pool = contract.get_pool(pid)
-    assert int(pool.state) == REFUNDED
-    assert int(pool.refund_reason) == REASON_INCONCLUSIVE
-
-
-def test_good_source_with_one_raising_resolves(direct_vm, deploy, alice, bob):
-    """A good first source still settles when a later source raises.
-
-    Order independence: the first source returns content and the second raises
-    and is dropped, so the verdict comes from the first.
-    """
-    contract = deploy()
-    pid = _contested(contract, direct_vm, alice, bob)
-
-    # /a returns content; /b is left unmocked so its render raises.
-    direct_vm.mock_web(r"https://ex\.com/a", {"status": 200, "body": "home won the match"})
-    direct_vm.mock_llm(
-        r"impartial resolver",
-        json.dumps({"outcome_index": 0, "confidence": 90, "evidence": "home won"}),
-    )
-    direct_vm.sender = alice
-    contract.request_resolution(pid)
-
-    pool = contract.get_pool(pid)
-    assert int(pool.state) == SETTLED
-    assert int(pool.winning_outcome_index) == 0
